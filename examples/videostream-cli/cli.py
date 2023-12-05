@@ -5,14 +5,11 @@ import math
 
 import cv2
 import numpy
-from aiortc import (
-    RTCIceCandidate,
-    RTCPeerConnection,
-    RTCSessionDescription,
-    VideoStreamTrack,
-)
+from aiortc import (RTCIceCandidate, RTCPeerConnection, RTCSessionDescription,
+                    VideoStreamTrack)
 from aiortc.contrib.media import MediaBlackhole, MediaPlayer, MediaRecorder
-from aiortc.contrib.signaling import BYE, add_signaling_arguments, create_signaling
+from aiortc.contrib.signaling import (BYE, add_signaling_arguments,
+                                      create_signaling)
 from av import VideoFrame
 
 
@@ -91,7 +88,7 @@ async def run(pc, player, recorder, signaling, role):
         print("Receiving %s" % track.kind)
         recorder.addTrack(track)
 
-    # connect signaling
+    # connect signaling 连接信令服务器
     await signaling.connect()
 
     if role == "offer":
