@@ -20,17 +20,9 @@ from pylibsrtp import Policy, Session
 from . import clock, rtp
 from .rtcicetransport import RTCIceTransport
 from .rtcrtpparameters import RTCRtpReceiveParameters, RTCRtpSendParameters
-from .rtp import (
-    AnyRtcpPacket,
-    RtcpByePacket,
-    RtcpPacket,
-    RtcpPsfbPacket,
-    RtcpRrPacket,
-    RtcpRtpfbPacket,
-    RtcpSrPacket,
-    RtpPacket,
-    is_rtcp,
-)
+from .rtp import (AnyRtcpPacket, RtcpByePacket, RtcpPacket, RtcpPsfbPacket,
+                  RtcpRrPacket, RtcpRtpfbPacket, RtcpSrPacket, RtpPacket,
+                  is_rtcp)
 from .stats import RTCStatsReport, RTCTransportStats
 
 SRTP_KEY_LEN = 16
@@ -300,8 +292,8 @@ class RTCDtlsTransport(AsyncIOEventEmitter):
         # counters
         self.__rx_bytes = 0
         self.__rx_packets = 0
-        self.__tx_bytes = 0
-        self.__tx_packets = 0
+        self.__tx_bytes = 0 #发送的数据量
+        self.__tx_packets = 0 #发送的数据包数量
 
         # SRTP
         self._rx_srtp: Session = None
@@ -579,7 +571,7 @@ class RTCDtlsTransport(AsyncIOEventEmitter):
 
         self.ssl.send(data)
         await self._write_ssl()
-
+    # 发送一个RTP packet
     async def _send_rtp(self, data: bytes) -> None:
         if self._state != State.CONNECTED:
             raise ConnectionError("Cannot send encrypted RTP, not connected")

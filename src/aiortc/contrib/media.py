@@ -226,12 +226,12 @@ class PlayerStreamTrack(MediaStreamTrack):
         self._queue = asyncio.Queue()
         self._start = None
 
-    async def recv(self) -> Union[Frame, Packet]:
+    async def recv(self) -> Union[Frame, Packet]:#获取媒体流中的数据进行编码
         if self.readyState != "live":
             raise MediaStreamError
 
         self._player._start(self)
-        data = await self._queue.get()
+        data = await self._queue.get()#获取一帧数据VideoFrame
         if data is None:
             self.stop()
             raise MediaStreamError

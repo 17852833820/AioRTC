@@ -3,11 +3,8 @@ from typing import List, Optional
 
 from .codecs import get_capabilities
 from .rtcdtlstransport import RTCDtlsTransport
-from .rtcrtpparameters import (
-    RTCRtpCodecCapability,
-    RTCRtpCodecParameters,
-    RTCRtpHeaderExtensionParameters,
-)
+from .rtcrtpparameters import (RTCRtpCodecCapability, RTCRtpCodecParameters,
+                               RTCRtpHeaderExtensionParameters)
 from .rtcrtpreceiver import RTCRtpReceiver
 from .rtcrtpsender import RTCRtpSender
 from .sdp import DIRECTIONS
@@ -39,12 +36,12 @@ class RTCRtpTransceiver:
 
         self._currentDirection: Optional[str] = None
         self._offerDirection: Optional[str] = None
-        self._preferred_codecs: List[RTCRtpCodecCapability] = []
+        self._preferred_codecs: List[RTCRtpCodecCapability] = [] #偏好的编解码器列表
         self._transport: RTCDtlsTransport = None
 
         # FIXME: this is only used by RTCPeerConnection
         self._bundled = False
-        self._codecs: List[RTCRtpCodecParameters] = []
+        self._codecs: List[RTCRtpCodecParameters] = [] # 支持的所有编解码器列表：VP8，rtx，H264
         self._headerExtensions: List[RTCRtpHeaderExtensionParameters] = []
 
     @property

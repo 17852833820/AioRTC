@@ -1,5 +1,6 @@
 import audioop
 import fractions
+import sys
 from typing import List, Optional, Tuple
 
 from av import AudioFrame
@@ -8,7 +9,11 @@ from av.packet import Packet
 
 from ..jitterbuffer import JitterFrame
 from ..mediastreams import convert_timebase
-from ._opus import ffi, lib
+from typing import Any
+
+ffi: Any
+lib: Any
+# from ._opus import ffi, lib
 from .base import Decoder, Encoder
 
 CHANNELS = 2

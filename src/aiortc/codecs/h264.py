@@ -15,7 +15,7 @@ from .base import Decoder, Encoder
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BITRATE = 1000000  # 1 Mbps
+DEFAULT_BITRATE = 10000000  # 1 Mbps
 MIN_BITRATE = 500000  # 500 kbps
 MAX_BITRATE = 3000000  # 3 Mbps
 
@@ -120,7 +120,7 @@ class H264Decoder(Decoder):
 
         return frames
 
-
+"""初始化编码器"""
 def create_encoder_context(
     codec_name: str, width: int, height: int, bitrate: int
 ) -> Tuple[av.CodecContext, bool]:
@@ -187,7 +187,7 @@ class H264Encoder(Encoder):
 
         return packages
 
-    @staticmethod
+    @staticmethod # 
     def _packetize_stap_a(
         data: bytes, packages_iterator: Iterator[bytes]
     ) -> Tuple[bytes, bytes]:
@@ -220,7 +220,7 @@ class H264Encoder(Encoder):
             return data, nalu
         else:
             return bytes([stap_header]) + payload, nalu
-
+    """用于拆分 H.264 编码的比特流（bitstream）中的不同 NAL 单元"""
     @staticmethod
     def _split_bitstream(buf: bytes) -> Iterator[bytes]:
         # Translated from: https://github.com/aizvorski/h264bitstream/blob/master/h264_nal.c#L134
@@ -249,25 +249,26 @@ class H264Encoder(Encoder):
             else:
                 yield buf[nal_start:i]
 
-    @classmethod
+    @classmethod #用于将给定的数据包（每个经过H264编码后的NAL单元）进行分片
     def _packetize(cls, packages: Iterator[bytes]) -> List[bytes]:
         packetized_packages = []
 
         packages_iterator = iter(packages)
-        package = next(packages_iterator, None)
+        package = next(packages_iterator, None)#获取生成器中下一个编码后的NAL单元数据
         while package is not None:
-            if len(package) > PACKET_MAX:
+            if len(package) > PACKET_MAX:#如果超过了一个Packet，用_packetize_fu_a将NAL单元分成多个FU-A
                 packetized_packages.extend(cls._packetize_fu_a(package))
                 package = next(packages_iterator, None)
-            else:
+            else:#否则用_packetize_stap_a方法将多个小的NAL单元打包成一个STAP-A
                 packetized, package = cls._packetize_stap_a(package, packages_iterator)
                 packetized_packages.append(packetized)
 
-        return packetized_packages
-
+        return packetized_packages #Packet列表
+    """生成器"""
     def _encode_frame(
         self, frame: av.VideoFrame, force_keyframe: bool
     ) -> Iterator[bytes]:
+        """检查帧尺寸和比特率是否与先前的编码器匹配：如果尺寸不一致或比特率变化超过10%，重新初始化编码器"""
         if self.codec and (
             frame.width != self.codec.width
             or frame.height != self.codec.height
@@ -278,31 +279,30 @@ class H264Encoder(Encoder):
             self.buffer_data = b""
             self.buffer_pts = None
             self.codec = None
-
+        """是否需要强制生成关键帧"""
         if force_keyframe:
             # force a complete image
             frame.pict_type = av.video.frame.PictureType.I
         else:
             # reset the picture type, otherwise no B-frames are produced
             frame.pict_type = av.video.frame.PictureType.NONE
-
+        """如果编码器未初始化：初始化编码器"""
         if self.codec is None:
             try:
-                self.codec, self.codec_buffering = create_encoder_context(
-                    "h264_omx", frame.width, frame.height, bitrate=self.target_bitrate
-                )
-            except Exception:
                 self.codec, self.codec_buffering = create_encoder_context(
                     "libx264",
                     frame.width,
                     frame.height,
                     bitrate=self.target_bitrate,
                 )
-
+                logger.info("Encodec | Frame height: {0} ,width: {1}".format(frame.height,frame.width))
+            except Exception:
+                logger.error("libx264 error")
+        """循环编码"""
         data_to_send = b""
         for package in self.codec.encode(frame):
             package_bytes = bytes(package)
-            if self.codec_buffering:
+            if self.codec_buffering:#如果有buffer缓冲区：延迟发送以确保累计所有给定PTS的数据
                 # delay sending to ensure we accumulate all packages
                 # for a given PTS
                 if package.pts == self.buffer_pts:
@@ -313,17 +313,19 @@ class H264Encoder(Encoder):
                     self.buffer_pts = package.pts
             else:
                 data_to_send += package_bytes
+        logger.info("Encodec | Frame  Type: {0} ,size: {1}".format(frame.pict_type,len(data_to_send)))
+        logger.info("Encodec | Target_bitrate: {0}".format(self.target_bitrate))
 
-        if data_to_send:
-            yield from self._split_bitstream(data_to_send)
+        if data_to_send: #将累积的编码数据分割为较小的数据包，并通过_split_bitstream方法发送
+            yield from self._split_bitstream(data_to_send)#将 data_to_send 中经过 _split_bitstream 处理后的每个 NAL 单元的内容逐一返回给调用方
 
     def encode(
         self, frame: Frame, force_keyframe: bool = False
     ) -> Tuple[List[bytes], int]:
         assert isinstance(frame, av.VideoFrame)
-        packages = self._encode_frame(frame, force_keyframe)
+        packages = self._encode_frame(frame, force_keyframe) #返回生成器
         timestamp = convert_timebase(frame.pts, frame.time_base, VIDEO_TIME_BASE)
-        return self._packetize(packages), timestamp
+        return self._packetize(packages), timestamp #返回编码打包后的packet列表和时间戳
 
     def pack(self, packet: Packet) -> Tuple[List[bytes], int]:
         assert isinstance(packet, av.Packet)
@@ -337,7 +339,7 @@ class H264Encoder(Encoder):
         Target bitrate in bits per second.
         """
         return self.__target_bitrate
-
+    # 如何调节目标比特率
     @target_bitrate.setter
     def target_bitrate(self, bitrate: int) -> None:
         bitrate = max(MIN_BITRATE, min(bitrate, MAX_BITRATE))

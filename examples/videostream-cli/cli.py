@@ -2,15 +2,21 @@ import argparse
 import asyncio
 import logging
 import math
+import os
+import sys
 
 import cv2
 import numpy
-from aiortc import (RTCIceCandidate, RTCPeerConnection, RTCSessionDescription,
-                    VideoStreamTrack)
-from aiortc.contrib.media import MediaBlackhole, MediaPlayer, MediaRecorder
-from aiortc.contrib.signaling import (BYE, add_signaling_arguments,
-                                      create_signaling)
 from av import VideoFrame
+
+sys.path.append("/mnt/e/ying/OneDrive - hust.edu.cn/Documents/毕业论文/新题-实验/Project/aiortc")
+from src.aiortc import (RTCIceCandidate, RTCPeerConnection,
+                        RTCSessionDescription, VideoStreamTrack)
+from src.aiortc.contrib.media import MediaBlackhole, MediaPlayer, MediaRecorder
+from src.aiortc.contrib.signaling import (BYE, add_signaling_arguments,
+                                          create_signaling)
+from src.aiortc.rtcrtpparameters import RTCRtpCodecParameters
+from src.aiortc.rtcrtpsender import RTCRtpSender
 
 
 class FlagVideoStreamTrack(VideoStreamTrack):
@@ -47,7 +53,7 @@ class FlagVideoStreamTrack(VideoStreamTrack):
             numpy.array(range(height), dtype=numpy.float32), (width, 1)
         ).transpose()
 
-        self.frames = []
+        self.frames = []#帧序列（30张）
         for k in range(30):
             phase = 2 * k * math.pi / 30
             map_x = id_x + 10 * numpy.cos(omega * id_x + phase)
@@ -80,10 +86,10 @@ async def run(pc, player, recorder, signaling, role):
 
         if player and player.video:
             pc.addTrack(player.video)
-        else:
+        else:#接收端（无player时），为pc添加虚拟视频流track
             pc.addTrack(FlagVideoStreamTrack())
 
-    @pc.on("track")
+    @pc.on("track") #创建receiver的track
     def on_track(track):
         print("Receiving %s" % track.kind)
         recorder.addTrack(track)
@@ -94,6 +100,10 @@ async def run(pc, player, recorder, signaling, role):
     if role == "offer":
         # send offer
         add_tracks()
+        capabilities = RTCRtpSender.getCapabilities("video")
+        preferences = list(filter(lambda x: x.name == "H264", capabilities.codecs))
+        transceiver = pc.getTransceivers()[0]
+        transceiver.setCodecPreferences(preferences)
         await pc.setLocalDescription(await pc.createOffer())
         await signaling.send(pc.localDescription)
 
@@ -101,13 +111,13 @@ async def run(pc, player, recorder, signaling, role):
     while True:
         obj = await signaling.receive()
 
-        if isinstance(obj, RTCSessionDescription):
-            await pc.setRemoteDescription(obj)
+        if isinstance(obj, RTCSessionDescription):# 判断obj的类型是否为RTCSessionDescription
+            await pc.setRemoteDescription(obj)#设置会话描述符SDP，可以开始传输数据
             await recorder.start()
 
-            if obj.type == "offer":
+            if obj.type == "offer":#如果作为接收端收到一个offer，需要产生一个answer并返回
                 # send answer
-                add_tracks()
+                add_tracks()#将player中的音视频添加到pc中
                 await pc.setLocalDescription(await pc.createAnswer())
                 await signaling.send(pc.localDescription)
         elif isinstance(obj, RTCIceCandidate):
@@ -127,7 +137,20 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.verbose:
-        logging.basicConfig(level=logging.DEBUG)
+        logger = logging.getLogger(__name__)
+        # 设置日志级别
+        logger.setLevel(logging.DEBUG)
+        # 根据角色设置日志文件路径
+        log_directory = f"log/{args.role}/"
+        log_file = f"{log_directory}test.log"
+        logging.basicConfig(filename=log_file, level=logging.DEBUG,format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'  )
+        # 确保目录存在
+        os.makedirs(log_directory, exist_ok=True)
+
+        # 添加文件处理器
+        handler = logging.FileHandler(log_file)
+        logger.addHandler(handler)
 
     # create signaling and peer connection
     signaling = create_signaling(args)
@@ -143,7 +166,7 @@ if __name__ == "__main__":
     if args.record_to:
         recorder = MediaRecorder(args.record_to)
     else:
-        recorder = MediaBlackhole()
+        recorder = MediaBlackhole()#发送端
 
     # run event loop
     loop = asyncio.get_event_loop()
@@ -164,3 +187,6 @@ if __name__ == "__main__":
         loop.run_until_complete(recorder.stop())
         loop.run_until_complete(signaling.close())
         loop.run_until_complete(pc.close())
+        handler.flush()
+        handler.close()
+

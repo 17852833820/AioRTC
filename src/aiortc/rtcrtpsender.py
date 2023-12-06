@@ -15,29 +15,13 @@ from .codecs.base import Encoder
 from .exceptions import InvalidStateError
 from .mediastreams import MediaStreamError, MediaStreamTrack
 from .rtcrtpparameters import RTCRtpCodecParameters, RTCRtpSendParameters
-from .rtp import (
-    RTCP_PSFB_APP,
-    RTCP_PSFB_PLI,
-    RTCP_RTPFB_NACK,
-    RTP_HISTORY_SIZE,
-    AnyRtcpPacket,
-    RtcpByePacket,
-    RtcpPsfbPacket,
-    RtcpRrPacket,
-    RtcpRtpfbPacket,
-    RtcpSdesPacket,
-    RtcpSenderInfo,
-    RtcpSourceInfo,
-    RtcpSrPacket,
-    RtpPacket,
-    unpack_remb_fci,
-    wrap_rtx,
-)
-from .stats import (
-    RTCOutboundRtpStreamStats,
-    RTCRemoteInboundRtpStreamStats,
-    RTCStatsReport,
-)
+from .rtp import (RTCP_PSFB_APP, RTCP_PSFB_PLI, RTCP_RTPFB_NACK,
+                  RTP_HISTORY_SIZE, AnyRtcpPacket, RtcpByePacket,
+                  RtcpPsfbPacket, RtcpRrPacket, RtcpRtpfbPacket,
+                  RtcpSdesPacket, RtcpSenderInfo, RtcpSourceInfo, RtcpSrPacket,
+                  RtpPacket, unpack_remb_fci, wrap_rtx)
+from .stats import (RTCOutboundRtpStreamStats, RTCRemoteInboundRtpStreamStats,
+                    RTCStatsReport)
 from .utils import random16, random32, uint16_add, uint32_add
 
 logger = logging.getLogger(__name__)
@@ -184,23 +168,23 @@ class RTCRtpSender:
 
         :param parameters: The :class:`RTCRtpSendParameters` for the sender.
         """
-        if not self.__started:
+        if not self.__started:#如果发送器未启动，设置相关发送参数
             self.__cname = parameters.rtcp.cname
             self.__mid = parameters.muxId
 
-            # make note of the RTP header extension IDs
-            self.__transport._register_rtp_sender(self, parameters)
-            self.__rtp_header_extensions_map.configure(parameters)
+            # make note of the RTP header extension IDs 
+            self.__transport._register_rtp_sender(self, parameters)#注册RTP发送器
+            self.__rtp_header_extensions_map.configure(parameters)#配置RTP头扩展
 
             # make note of RTX payload type
-            for codec in parameters.codecs:
+            for codec in parameters.codecs: #遍历传入参数中的编解码器
                 if (
                     is_rtx(codec)
                     and codec.parameters["apt"] == parameters.codecs[0].payloadType
-                ):
+                ):#查找RTX编解码器并记录其负载类型
                     self.__rtx_payload_type = codec.payloadType
                     break
-
+            #启动RTP和RTCP任务：分别启动异步任务_run_rtp和_run_rtcp
             self.__rtp_task = asyncio.ensure_future(self._run_rtp(parameters.codecs[0]))
             self.__rtcp_task = asyncio.ensure_future(self._run_rtcp())
             self.__started = True
@@ -219,6 +203,7 @@ class RTCRtpSender:
             await asyncio.gather(self.__rtp_exited.wait(), self.__rtcp_exited.wait())
 
     async def _handle_rtcp_packet(self, packet):
+        #处理 RR 和 SR 类型的 RTCP 包
         if isinstance(packet, (RtcpRrPacket, RtcpSrPacket)):
             for report in filter(lambda x: x.ssrc == self._ssrc, packet.reports):
                 # estimate round-trip time
@@ -248,14 +233,17 @@ class RTCRtpSender:
                         fractionLost=report.fraction_lost,
                     )
                 )
+        #处理 NACK 类型的 RTCP 包：请求重传
         elif isinstance(packet, RtcpRtpfbPacket) and packet.fmt == RTCP_RTPFB_NACK:
             for seq in packet.lost:
                 await self._retransmit(seq)
+        #处理 PLI 类型的 RTCP 包：请求关键帧
         elif isinstance(packet, RtcpPsfbPacket) and packet.fmt == RTCP_PSFB_PLI:
             self._send_keyframe()
+        #处理 APP 类型的 RTCP 包：REMB反馈包（包含估计的带宽信息）
         elif isinstance(packet, RtcpPsfbPacket) and packet.fmt == RTCP_PSFB_APP:
             try:
-                bitrate, ssrcs = unpack_remb_fci(packet.fci)
+                bitrate, ssrcs = unpack_remb_fci(packet.fci)#REMB反馈的带宽估计
                 if self._ssrc in ssrcs:
                     self.__log_debug(
                         "- receiver estimated maximum bitrate %d bps", bitrate
@@ -267,27 +255,29 @@ class RTCRtpSender:
 
     async def _next_encoded_frame(self, codec: RTCRtpCodecParameters):
         # get [Frame|Packet]
+        #获取下一个媒体帧或数据包
         data = await self.__track.recv()
         audio_level = None
-
+        #如果编码器未初始化，获取一个适用于给定编解码器参数的编码器
         if self.__encoder is None:
             self.__encoder = get_encoder(codec)
 
-        if isinstance(data, Frame):
-            # encode frame
+        if isinstance(data, Frame):#如果获取的数据是帧类型
+            # encode frame 编码帧
             if isinstance(data, AudioFrame):
                 audio_level = rtp.compute_audio_level_dbov(data)
 
             force_keyframe = self.__force_keyframe
             self.__force_keyframe = False
+            #调用编码器的encode方法执行编码，返回编码的payloads（packet列表）和时间戳
             payloads, timestamp = await self.__loop.run_in_executor(
                 None, self.__encoder.encode, data, force_keyframe
             )
-        else:
+        else:#调用编码器的pack方法执行编码
             payloads, timestamp = self.__encoder.pack(data)
-
+        #返回一个包含编码payloads，时间戳和音频级别的RTCEncodedFrame对象
         return RTCEncodedFrame(payloads, timestamp, audio_level)
-
+    """重传丢失的RTP包"""
     async def _retransmit(self, sequence_number: int) -> None:
         """
         Retransmit an RTP packet which was reported as lost.
@@ -316,18 +306,18 @@ class RTCRtpSender:
     async def _run_rtp(self, codec: RTCRtpCodecParameters) -> None:
         self.__log_debug("- RTP started")
         self.__rtp_started.set()
-
+        # 初始化序列号和起始时间戳
         sequence_number = random16()
         timestamp_origin = random32()
         try:
-            while True:
+            while True:#主循环：不断获取下一个编码帧，遍历帧中的payload并创建RTP数据包发送
                 if not self.__track:
                     await asyncio.sleep(0.02)
                     continue
-
-                enc_frame = await self._next_encoded_frame(codec)
+                # 编码下一帧
+                enc_frame = await self._next_encoded_frame(codec) #返回了一帧图像编码后产生的数据：编码打包后的packet列表和时间戳
                 timestamp = uint32_add(timestamp_origin, enc_frame.timestamp)
-
+                # 遍历每个packet并为其创建一个RTP数据包
                 for i, payload in enumerate(enc_frame.payloads):
                     packet = RtpPacket(
                         payload_type=codec.payloadType,
@@ -338,7 +328,7 @@ class RTCRtpSender:
                     packet.payload = payload
                     packet.marker = (i == len(enc_frame.payloads) - 1) and 1 or 0
 
-                    # set header extensions
+                    # set header extensions 添加头部扩展
                     packet.extensions.abs_send_time = (
                         clock.current_ntp_time() >> 14
                     ) & 0x00FFFFFF
@@ -346,14 +336,14 @@ class RTCRtpSender:
                     if enc_frame.audio_level is not None:
                         packet.extensions.audio_level = (False, -enc_frame.audio_level)
 
-                    # send packet
+                    # send packet 调用_send_rtp发送RTP数据包
                     self.__log_debug("> %s", packet)
                     self.__rtp_history[
                         packet.sequence_number % RTP_HISTORY_SIZE
                     ] = packet
-                    packet_bytes = packet.serialize(self.__rtp_header_extensions_map)
+                    packet_bytes = packet.serialize(self.__rtp_header_extensions_map) #一个RTP packet
                     await self.transport._send_rtp(packet_bytes)
-
+                    # 更新统计信息
                     self.__ntp_timestamp = clock.current_ntp_time()
                     self.__rtp_timestamp = packet.timestamp
                     self.__octet_count += len(payload)

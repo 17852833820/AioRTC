@@ -17,33 +17,15 @@ from .jitterbuffer import JitterBuffer
 from .mediastreams import MediaStreamError, MediaStreamTrack
 from .rate import RemoteBitrateEstimator
 from .rtcdtlstransport import RTCDtlsTransport
-from .rtcrtpparameters import (
-    RTCRtpCapabilities,
-    RTCRtpCodecParameters,
-    RTCRtpReceiveParameters,
-)
-from .rtp import (
-    RTCP_PSFB_APP,
-    RTCP_PSFB_PLI,
-    RTCP_RTPFB_NACK,
-    RTP_HISTORY_SIZE,
-    AnyRtcpPacket,
-    RtcpByePacket,
-    RtcpPsfbPacket,
-    RtcpReceiverInfo,
-    RtcpRrPacket,
-    RtcpRtpfbPacket,
-    RtcpSrPacket,
-    RtpPacket,
-    clamp_packets_lost,
-    pack_remb_fci,
-    unwrap_rtx,
-)
-from .stats import (
-    RTCInboundRtpStreamStats,
-    RTCRemoteOutboundRtpStreamStats,
-    RTCStatsReport,
-)
+from .rtcrtpparameters import (RTCRtpCapabilities, RTCRtpCodecParameters,
+                               RTCRtpReceiveParameters)
+from .rtp import (RTCP_PSFB_APP, RTCP_PSFB_PLI, RTCP_RTPFB_NACK,
+                  RTP_HISTORY_SIZE, AnyRtcpPacket, RtcpByePacket,
+                  RtcpPsfbPacket, RtcpReceiverInfo, RtcpRrPacket,
+                  RtcpRtpfbPacket, RtcpSrPacket, RtpPacket, clamp_packets_lost,
+                  pack_remb_fci, unwrap_rtx)
+from .stats import (RTCInboundRtpStreamStats, RTCRemoteOutboundRtpStreamStats,
+                    RTCStatsReport)
 from .utils import uint16_add, uint16_gt
 
 logger = logging.getLogger(__name__)
@@ -450,7 +432,7 @@ class RTCRtpReceiver:
         """
         self.__log_debug("< %s", packet)
 
-        # feed bitrate estimator
+        # feed bitrate estimator 收到RTP包时更新带宽估计
         if self.__remote_bitrate_estimator is not None:
             if packet.extensions.abs_send_time is not None:
                 remb = self.__remote_bitrate_estimator.add(

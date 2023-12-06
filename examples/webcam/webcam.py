@@ -47,7 +47,7 @@ def force_codec(pc, sender, forced_codec):
     transceiver = next(t for t in pc.getTransceivers() if t.sender == sender)
     transceiver.setCodecPreferences(
         [codec for codec in codecs if codec.mimeType == forced_codec]
-    )
+    )#将编解码器偏好设置为仅包含符合指定 forced_codec 的媒体类型的编解码器
 
 
 async def index(request):

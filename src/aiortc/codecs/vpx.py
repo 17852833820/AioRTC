@@ -9,7 +9,10 @@ from av.packet import Packet
 
 from ..jitterbuffer import JitterFrame
 from ..mediastreams import VIDEO_CLOCK_RATE, VIDEO_TIME_BASE, convert_timebase
-from ._vpx import ffi, lib
+# from ._vpx import ffi, lib
+from typing import Any
+ffi: Any
+lib: Any
 from .base import Decoder, Encoder
 
 DEFAULT_BITRATE = 500000  # 500 kbps

@@ -1,40 +1,30 @@
 import asyncio
 import copy
 import logging
+import sys
 import uuid
 from typing import Dict, List, Optional, Set, Union
 
 from pyee.asyncio import AsyncIOEventEmitter
 
+# sys.path.append("/mnt/e/ying/OneDrive - hust.edu.cn/Documents/毕业论文/新题-实验/Project/aiortc")
 from . import clock, rtp, sdp
 from .codecs import CODECS, HEADER_EXTENSIONS, is_rtx
 from .events import RTCTrackEvent
-from .exceptions import (
-    InternalError,
-    InvalidAccessError,
-    InvalidStateError,
-    OperationError,
-)
+from .exceptions import (InternalError, InvalidAccessError, InvalidStateError,
+                         OperationError)
 from .mediastreams import MediaStreamTrack
 from .rtcconfiguration import RTCConfiguration
 from .rtcdatachannel import RTCDataChannel, RTCDataChannelParameters
-from .rtcdtlstransport import RTCCertificate, RTCDtlsParameters, RTCDtlsTransport
-from .rtcicetransport import (
-    RTCIceCandidate,
-    RTCIceGatherer,
-    RTCIceParameters,
-    RTCIceTransport,
-)
-from .rtcrtpparameters import (
-    RTCRtpCodecCapability,
-    RTCRtpCodecParameters,
-    RTCRtpDecodingParameters,
-    RTCRtpHeaderExtensionParameters,
-    RTCRtpParameters,
-    RTCRtpReceiveParameters,
-    RTCRtpRtxParameters,
-    RTCRtpSendParameters,
-)
+from .rtcdtlstransport import (RTCCertificate, RTCDtlsParameters,
+                               RTCDtlsTransport)
+from .rtcicetransport import (RTCIceCandidate, RTCIceGatherer,
+                              RTCIceParameters, RTCIceTransport)
+from .rtcrtpparameters import (RTCRtpCodecCapability, RTCRtpCodecParameters,
+                               RTCRtpDecodingParameters,
+                               RTCRtpHeaderExtensionParameters,
+                               RTCRtpParameters, RTCRtpReceiveParameters,
+                               RTCRtpRtxParameters, RTCRtpSendParameters)
 from .rtcrtpreceiver import RemoteStreamTrack, RTCRtpReceiver
 from .rtcrtpsender import RTCRtpSender
 from .rtcrtptransceiver import RTCRtpTransceiver
@@ -79,7 +69,7 @@ def filter_preferred_codecs(
     return filtered
 
 
-def find_common_codecs(
+def find_common_codecs( #SDP协商找出通用都支持的编解码器
     local_codecs: List[RTCRtpCodecParameters],
     remote_codecs: List[RTCRtpCodecParameters],
 ) -> List[RTCRtpCodecParameters]:
@@ -309,7 +299,7 @@ class RTCPeerConnection(AsyncIOEventEmitter):
         self.__sctpRemotePort: Optional[int] = None
         self.__sctpRemoteCaps = None
         self.__stream_id = str(uuid.uuid4())
-        self.__transceivers: List[RTCRtpTransceiver] = []
+        self.__transceivers: List[RTCRtpTransceiver] = []#媒体流的传输器列表
 
         self.__connectionState = "new"
         self.__iceConnectionState = "new"
@@ -322,7 +312,7 @@ class RTCPeerConnection(AsyncIOEventEmitter):
         self.__pendingLocalDescription: Optional[sdp.SessionDescription] = None
         self.__pendingRemoteDescription: Optional[sdp.SessionDescription] = None
 
-    @property
+    @property #返回当前pc的连接状态
     def connectionState(self) -> str:
         """
         The current connection state.
@@ -333,7 +323,7 @@ class RTCPeerConnection(AsyncIOEventEmitter):
         """
         return self.__connectionState
 
-    @property
+    @property #返回ICE的连接状态
     def iceConnectionState(self) -> str:
         """
         The current ICE connection state.
@@ -344,7 +334,7 @@ class RTCPeerConnection(AsyncIOEventEmitter):
         """
         return self.__iceConnectionState
 
-    @property
+    @property 
     def iceGatheringState(self) -> str:
         """
         The current ICE gathering state.
@@ -423,22 +413,22 @@ class RTCPeerConnection(AsyncIOEventEmitter):
         will be transmitted to the remote peer.
         """
         # check state is valid
-        self.__assertNotClosed()
+        self.__assertNotClosed()#确保 PeerConnection 处于有效状态，未关闭
         if track.kind not in ["audio", "video"]:
             raise InternalError(f'Invalid track kind "{track.kind}"')
 
         # don't add track twice
-        self.__assertTrackHasNoSender(track)
+        self.__assertTrackHasNoSender(track)#确保不会重复添加相同的track
 
-        for transceiver in self.__transceivers:
+        for transceiver in self.__transceivers:#遍历检查是否存在与轨道种类匹配的传输器
             if transceiver.kind == track.kind:
                 if transceiver.sender.track is None:
                     transceiver.sender.replaceTrack(track)
                     transceiver.direction = or_direction(
-                        transceiver.direction, "sendonly"
+                        transceiver.direction, "sendonly"  #将传输器的方向 (direction) 更新为 "sendonly"
                     )
                     return transceiver.sender
-
+        #如果未找到匹配的传输器，新建并将其方向设置为 "sendrecv"，种类设置为track的种类，同时将track关联到传输器的发送器 (sender)
         transceiver = self.__createTransceiver(
             direction="sendrecv", kind=track.kind, sender_track=track
         )
@@ -833,7 +823,7 @@ class RTCPeerConnection(AsyncIOEventEmitter):
             dtlsTransport: Optional[RTCDtlsTransport] = None
             self.__seenMids.add(media.rtp.muxId)
             if media.kind in ["audio", "video"]:
-                # find transceiver
+                # find transceiver 寻找kind匹配的传输器
                 transceiver = None
                 for t in self.__transceivers:
                     if t.kind == media.kind and t.mid in [None, media.rtp.muxId]:
@@ -846,7 +836,7 @@ class RTCPeerConnection(AsyncIOEventEmitter):
                     transceiver._set_mid(media.rtp.muxId)
                     transceiver._set_mline_index(i)
 
-                # negotiate codecs
+                # negotiate codecs 协商编解码器
                 common = filter_preferred_codecs(
                     find_common_codecs(CODECS[media.kind], media.rtp.codecs),
                     transceiver._preferred_codecs,
@@ -871,7 +861,7 @@ class RTCPeerConnection(AsyncIOEventEmitter):
                 else:
                     transceiver._offerDirection = direction
 
-                # create remote stream track
+                # create remote stream track 为receiver绑定trace
                 if (
                     direction in ["recvonly", "sendrecv"]
                     and not transceiver.receiver.track

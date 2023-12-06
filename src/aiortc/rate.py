@@ -1,8 +1,9 @@
+import logging
 import math
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
 
-from aiortc.utils import uint32_add, uint32_gt
+from .utils import uint32_add, uint32_gt
 
 BURST_DELTA_THRESHOLD_MS = 5
 
@@ -214,11 +215,11 @@ class InterArrival:
         self, timestamp: int, arrival_time: int, packet_size: int
     ) -> Optional[InterArrivalDelta]:
         deltas = None
-        if self.current_group is None:
+        if self.current_group is None:#如果当前分组为空，创建一个新的分组
             self.current_group = TimestampGroup(timestamp)
         elif self.packet_out_of_order(timestamp):
             return deltas
-        elif self.new_timestamp_group(timestamp, arrival_time):
+        elif self.new_timestamp_group(timestamp, arrival_time):#是否需要创建一个新的时间戳分组
             if self.previous_group is not None:
                 deltas = InterArrivalDelta(
                     timestamp=uint32_add(
@@ -518,7 +519,7 @@ class RemoteBitrateEstimator:
         self.rate_control = AimdRateControl()
         self.last_update_ms: Optional[int] = None
         self.ssrcs: Dict[int, int] = {}
-
+    """网络带宽估计"""
     def add(
         self, arrival_time_ms: int, abs_send_time: int, payload_size: int, ssrc: int
     ) -> Optional[Tuple[int, List[int]]]:
@@ -528,7 +529,7 @@ class RemoteBitrateEstimator:
         # make note of SSRC
         self.ssrcs[ssrc] = arrival_time_ms
 
-        # update incoming bitrate
+        # update incoming bitrate 记录到达时刻的时间和负载大小
         if self.incoming_bitrate.rate(arrival_time_ms) is not None:
             self.incoming_bitrate_initialized = True
         elif self.incoming_bitrate_initialized:
@@ -536,7 +537,7 @@ class RemoteBitrateEstimator:
             self.incoming_bitrate_initialized = False
         self.incoming_bitrate.add(payload_size, arrival_time_ms)
 
-        # calculate inter-arrival deltas
+        # calculate inter-arrival deltas 
         deltas = self.inter_arrival.compute_deltas(
             timestamp, arrival_time_ms, payload_size
         )
@@ -555,7 +556,7 @@ class RemoteBitrateEstimator:
                 self.estimator.num_of_deltas(),
                 arrival_time_ms,
             )
-
+        # 如果不更新带宽估计值
         if not update_estimate:
             if (
                 self.last_update_ms is None
@@ -572,6 +573,7 @@ class RemoteBitrateEstimator:
                 self.incoming_bitrate.rate(arrival_time_ms),
                 arrival_time_ms,
             )
+            logging.info("Rate：Estimate Target bitrate: {0}".format(target_bitrate))
             if target_bitrate is not None:
                 self.last_update_ms = arrival_time_ms
                 return target_bitrate, list(self.ssrcs.keys())
