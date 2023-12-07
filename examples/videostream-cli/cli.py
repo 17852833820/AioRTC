@@ -149,7 +149,7 @@ if __name__ == "__main__":
         os.makedirs(log_directory, exist_ok=True)
 
         # 添加文件处理器
-        handler = logging.FileHandler(log_file)
+        handler = logging.FileHandler(log_file, mode='w')
         logger.addHandler(handler)
 
     # create signaling and peer connection
