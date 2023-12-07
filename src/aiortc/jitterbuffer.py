@@ -1,7 +1,9 @@
 from typing import List, Optional, Tuple
+import numpy as np
 
 from .rtp import RtpPacket
 from .utils import uint16_add
+from .clock import current_ms
 
 MAX_MISORDER = 100
 
@@ -10,6 +12,7 @@ class JitterFrame:
     def __init__(self, data: bytes, timestamp: int) -> None:
         self.data = data
         self.timestamp = timestamp
+        self.times_dur = {}
 
 
 class JitterBuffer:
@@ -22,6 +25,7 @@ class JitterBuffer:
         self._packets: List[Optional[RtpPacket]] = [None for i in range(capacity)]
         self._prefetch = prefetch
         self._is_video = is_video
+        self._packet_times_in = {}
 
     @property
     def capacity(self) -> int:
@@ -57,7 +61,8 @@ class JitterBuffer:
 
         pos = packet.sequence_number % self._capacity
         self._packets[pos] = packet
-
+        if packet.timestamp not in self._packet_times_in: self._packet_times_in[packet.timestamp] = []  
+        self._packet_times_in[packet.timestamp].append(current_ms())
         return pli_flag, self._remove_frame(packet.sequence_number)
 
     def _remove_frame(self, sequence_number: int) -> Optional[JitterFrame]:
@@ -81,20 +86,23 @@ class JitterBuffer:
                         data=b"".join([x._data for x in packets]), timestamp=timestamp
                     )
                     remove = count
+                    avg_time_in = np.mean(self._packet_times_in[timestamp])
+                    jit_dur = current_ms() - avg_time_in
 
                 # check we have prefetched enough
                 frames += 1
                 if frames >= self._prefetch:
                     self.remove(remove)
-                    return frame
-
+                    
+                    return frame, jit_dur
+                
                 # start a new frame
                 packets = []
                 timestamp = packet.timestamp
 
             packets.append(packet)
 
-        return None
+        return None, None
 
     def remove(self, count: int) -> None:
         assert count <= self._capacity

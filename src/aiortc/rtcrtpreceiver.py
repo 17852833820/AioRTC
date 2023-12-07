@@ -34,6 +34,11 @@ logger = logging.getLogger(__name__)
 def decoder_worker(loop, input_q, output_q):
     codec_name = None
     decoder = None
+    __log_debug: Callable[..., None] = lambda *args: None
+    if logger.isEnabledFor(logging.DEBUG):
+        __log_debug = lambda msg, *args: logger.debug(
+            f"RTCRtpReceiver(%s) {msg}", 'decoder_worker', *args
+        )
 
     while True:
         task = input_q.get()
@@ -50,6 +55,10 @@ def decoder_worker(loop, input_q, output_q):
         for frame in decoder.decode(encoded_frame):
             # pass the decoded frame to the track
             asyncio.run_coroutine_threadsafe(output_q.put(frame), loop)
+        
+        now = clock.current_ms()
+        dec_dur = now - encoded_frame.times_dur['time_in_dec_q']
+        __log_debug('[FRAME_INFO] T: %d, dec_dur: %d, Bytes: %d', encoded_frame.timestamp, dec_dur, len(encoded_frame.data))
 
     if decoder is not None:
         del decoder
@@ -499,7 +508,9 @@ class RTCRtpReceiver:
             return
 
         # try to re-assemble encoded frame
-        pli_flag, encoded_frame = self.__jitter_buffer.add(packet)
+        pli_flag, (encoded_frame, jit_dur) = self.__jitter_buffer.add(packet)
+        if jit_dur is not None:
+            self.__log_debug('[FRAME_INFO] T: %d, jit_dur: %d, Bytes: %d', encoded_frame.timestamp, jit_dur, len(encoded_frame.data))
         # check if the PLI should be sent
         if pli_flag:
             await self._send_rtcp_pli(packet.ssrc)
@@ -509,6 +520,7 @@ class RTCRtpReceiver:
             encoded_frame.timestamp = self.__timestamp_mapper.map(
                 encoded_frame.timestamp
             )
+            encoded_frame.times_dur['time_in_dec_q'] = clock.current_ms()
             self.__decoder_queue.put((codec, encoded_frame))
 
     async def _run_rtcp(self) -> None:

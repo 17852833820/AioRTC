@@ -262,6 +262,7 @@ class RTCRtpSender:
         if self.__encoder is None:
             self.__encoder = get_encoder(codec)
 
+        ts = clock.current_ms()#获取当前时间戳
         if isinstance(data, Frame):#如果获取的数据是帧类型
             # encode frame 编码帧
             if isinstance(data, AudioFrame):
@@ -275,8 +276,9 @@ class RTCRtpSender:
             )
         else:#调用编码器的pack方法执行编码
             payloads, timestamp = self.__encoder.pack(data)
+        te = clock.current_ms()#获取编码结束时间戳
         #返回一个包含编码payloads，时间戳和音频级别的RTCEncodedFrame对象
-        return RTCEncodedFrame(payloads, timestamp, audio_level)
+        return RTCEncodedFrame(payloads, timestamp, audio_level), te-ts
     """重传丢失的RTP包"""
     async def _retransmit(self, sequence_number: int) -> None:
         """
@@ -315,8 +317,9 @@ class RTCRtpSender:
                     await asyncio.sleep(0.02)
                     continue
                 # 编码下一帧
-                enc_frame = await self._next_encoded_frame(codec) #返回了一帧图像编码后产生的数据：编码打包后的packet列表和时间戳
+                enc_frame, enc_dur = await self._next_encoded_frame(codec) #返回了一帧图像编码后产生的数据：编码打包后的packet列表和时间戳
                 timestamp = uint32_add(timestamp_origin, enc_frame.timestamp)
+                self.__log_debug('[FRAME_INFO] T: %d, enc_dur: %d', timestamp, enc_dur)
                 # 遍历每个packet并为其创建一个RTP数据包
                 for i, payload in enumerate(enc_frame.payloads):
                     packet = RtpPacket(
