@@ -208,7 +208,8 @@ class RTCRtpSender:
             for report in filter(lambda x: x.ssrc == self._ssrc, packet.reports):
                 # estimate round-trip time
                 if self.__lsr == report.lsr and report.dlsr:
-                    rtt = time.time() - self.__lsr_time - (report.dlsr / 65536)
+                    rtt = time.time() - self.__lsr_time - (report.dlsr / 65536)#接收RR包的时间-发送上一个SR包的时间-dlsr（接收端发送RR包-接收端接收SR包）
+                    self.__log_debug('[FRAME_INFO] RTT: %f ms', rtt*1000)
                     if self.__rtt is None:
                         self.__rtt = rtt
                     else:
@@ -310,16 +311,18 @@ class RTCRtpSender:
         self.__rtp_started.set()
         # 初始化序列号和起始时间戳
         sequence_number = random16()
-        timestamp_origin = random32()
+        timestamp_origin = random32()#初始化一个随机的初始时间和随机的初始包序号
+        self.__log_debug('[FRAME_INFO] Timestamp_origin: %d, Sequence_number: %d',timestamp_origin, sequence_number)
+        frame_number=0
         try:
             while True:#主循环：不断获取下一个编码帧，遍历帧中的payload并创建RTP数据包发送
                 if not self.__track:
                     await asyncio.sleep(0.02)
                     continue
                 # 编码下一帧
-                enc_frame, enc_dur = await self._next_encoded_frame(codec) #返回了一帧图像编码后产生的数据：编码打包后的packet列表和时间戳
+                enc_frame, enc_dur = await self._next_encoded_frame(codec) #返回了一帧图像编码后产生的数据：编码打包后的packet列表和时间戳，enc_dur为编码一张图像花费的时间
                 timestamp = uint32_add(timestamp_origin, enc_frame.timestamp)
-                self.__log_debug('[FRAME_INFO] T: %d, enc_dur: %d', timestamp, enc_dur)
+                self.__log_debug('[FRAME_INFO] Number: %d, PTS: %d, enc_dur: %d', frame_number,timestamp, enc_dur)
                 # 遍历每个packet并为其创建一个RTP数据包
                 for i, payload in enumerate(enc_frame.payloads):
                     packet = RtpPacket(
@@ -329,16 +332,17 @@ class RTCRtpSender:
                     )
                     packet.ssrc = self._ssrc
                     packet.payload = payload
-                    packet.marker = (i == len(enc_frame.payloads) - 1) and 1 or 0
-
+                    packet.marker = (i == len(enc_frame.payloads) - 1) and 1 or 0 #用于指示当前数据包是否是一个帧（frame）的最后一个数据包
                     # set header extensions 添加头部扩展
-                    packet.extensions.abs_send_time = (
+                    packet.extensions.abs_send_time = ( #RTP包的发送时间：获取当前的NTP时间戳，将64位的 NTP timestamps转圜为24位
                         clock.current_ntp_time() >> 14
-                    ) & 0x00FFFFFF
-                    packet.extensions.mid = self.__mid
+                    ) & 0x00FFFFFF 
+                    packet.extensions.mid = self.__mid #用于唯一标识发送的媒体流
+                    packet.extensions.marker_first= (i == 0) and "1" or "0" #是否是第一个packet
                     if enc_frame.audio_level is not None:
                         packet.extensions.audio_level = (False, -enc_frame.audio_level)
-
+                    # 记录第一个数据包的发送时间
+                    
                     # send packet 调用_send_rtp发送RTP数据包
                     self.__log_debug("> %s", packet)
                     self.__rtp_history[
@@ -352,6 +356,7 @@ class RTCRtpSender:
                     self.__octet_count += len(payload)
                     self.__packet_count += 1
                     sequence_number = uint16_add(sequence_number, 1)
+                frame_number = uint16_add(frame_number, 1)
         except (asyncio.CancelledError, ConnectionError, MediaStreamError):
             pass
         except Exception:

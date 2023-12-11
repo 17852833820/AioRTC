@@ -46,6 +46,7 @@ class HeaderExtensions:
     rtp_stream_id: Any = None
     transmission_offset: Optional[int] = None
     transport_sequence_number: Optional[int] = None
+    marker_first=None
 
 
 class HeaderExtensionsMap:
@@ -56,6 +57,9 @@ class HeaderExtensionsMap:
         for ext in parameters.headerExtensions:
             if ext.uri == "urn:ietf:params:rtp-hdrext:sdes:mid":
                 self.__ids.mid = ext.id
+            # 新增扩展信息marker_first
+            if ext.uri == "urn:ietf:params:rtp-hdrext:sdes:marker_first": 
+                self.__ids.marker_first = ext.id
             elif ext.uri == "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id":
                 self.__ids.repaired_rtp_stream_id = ext.id
             elif ext.uri == "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id":
@@ -81,6 +85,8 @@ class HeaderExtensionsMap:
         ):
             if x_id == self.__ids.mid:
                 values.mid = x_value.decode("utf8")
+            elif x_id == self.__ids.marker_first:
+                values.marker_first = x_value.decode("utf8")
             elif x_id == self.__ids.repaired_rtp_stream_id:
                 values.repaired_rtp_stream_id = x_value.decode("ascii")
             elif x_id == self.__ids.rtp_stream_id:
@@ -100,6 +106,8 @@ class HeaderExtensionsMap:
         extensions = []
         if values.mid is not None and self.__ids.mid:
             extensions.append((self.__ids.mid, values.mid.encode("utf8")))
+        if (values.marker_first is not None and self.__ids.marker_first):
+            extensions.append((self.__ids.marker_first,values.marker_first.encode("utf8")))
         if (
             values.repaired_rtp_stream_id is not None
             and self.__ids.repaired_rtp_stream_id
@@ -774,7 +782,6 @@ def wrap_rtx(
     """
     rtx = RtpPacket(
         payload_type=payload_type,
-        marker=packet.marker,
         sequence_number=sequence_number,
         timestamp=packet.timestamp,
         ssrc=ssrc,

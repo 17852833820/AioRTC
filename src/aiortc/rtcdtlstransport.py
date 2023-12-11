@@ -283,13 +283,13 @@ class RTCDtlsTransport(AsyncIOEventEmitter):
         self._data_receiver = None
         self._role = "auto"
         self._rtp_header_extensions_map = rtp.HeaderExtensionsMap()
-        self._rtp_router = RtpRouter()
+        self._rtp_router = RtpRouter() #用于路由 RTP 数据包
         self._state = State.NEW
         self._stats_id = "transport_" + str(id(self))
         self._task: Optional[asyncio.Future[None]] = None
         self._transport = transport
 
-        # counters
+        # counters 接收字节数和数据包数的计数器
         self.__rx_bytes = 0
         self.__rx_packets = 0
         self.__tx_bytes = 0 #发送的数据量
@@ -329,7 +329,7 @@ class RTCDtlsTransport(AsyncIOEventEmitter):
         return RTCDtlsParameters(
             fingerprints=self.__local_certificate.getFingerprints()
         )
-
+    #用于启动 DTLS 传输协商的异步方法
     async def start(self, remoteParameters: RTCDtlsParameters) -> None:
         """
         Start DTLS transport negotiation with the parameters of the remote
@@ -343,19 +343,20 @@ class RTCDtlsTransport(AsyncIOEventEmitter):
         # For WebRTC, the DTLS role is explicitly determined as part of the
         # offer / answer exchange.
         #
-        # For ORTC however, we determine the DTLS role based on the ICE role.
+        # For ORTC however, we determine the DTLS role based on the ICE role. 根据 ICE 传输的角色设置 DTLS 传输的角色
         if self._role == "auto":
             if self.transport.role == "controlling":
                 self._set_role("server")
             else:
                 self._set_role("client")
-
+        # SSL 初始化
         if self._role == "server":
             self.ssl.set_accept_state()
         else:
             self.ssl.set_connect_state()
 
         self._set_state(State.CONNECTING)
+        # 循环执行DTLS 握手，直到连接加密
         try:
             while not self.encrypted:
                 try:
@@ -374,7 +375,7 @@ class RTCDtlsTransport(AsyncIOEventEmitter):
             self._set_state(State.FAILED)
             return
 
-        # check remote fingerprint
+        # check remote fingerprint 验证远程指纹
         x509 = self.ssl.get_peer_certificate()
         remote_fingerprint = certificate_digest(x509)
         fingerprint_is_valid = False
@@ -390,7 +391,7 @@ class RTCDtlsTransport(AsyncIOEventEmitter):
             self._set_state(State.FAILED)
             return
 
-        # generate keying material
+        # generate keying material 生成密钥
         view = self.ssl.export_keying_material(
             b"EXTRACTOR-dtls_srtp", 2 * (SRTP_KEY_LEN + SRTP_SALT_LEN)
         )
@@ -411,7 +412,7 @@ class RTCDtlsTransport(AsyncIOEventEmitter):
         tx_policy.window_size = 1024
         self._tx_srtp = Session(tx_policy)
 
-        # start data pump
+        # start data pump DTLS 握手完成，将传输状态设置为连接成功，启动异步任务 (__run()) 处理数据传输
         self.__log_debug("- DTLS handshake complete")
         self._set_state(State.CONNECTED)
         self._task = asyncio.ensure_future(self.__run())
@@ -434,10 +435,10 @@ class RTCDtlsTransport(AsyncIOEventEmitter):
             except ConnectionError:
                 pass
             self.__log_debug("- DTLS shutdown complete")
-
+    # 进行数据传输的异步任务
     async def __run(self) -> None:
         try:
-            while True:
+            while True: # 循环接收数据
                 await self._recv_next()
         except ConnectionError:
             for receiver in self._rtp_router.receivers:
@@ -470,17 +471,17 @@ class RTCDtlsTransport(AsyncIOEventEmitter):
 
     async def _handle_rtcp_data(self, data: bytes) -> None:
         try:
-            packets = RtcpPacket.parse(data)
+            packets = RtcpPacket.parse(data) #解析接收到的 RTCP 数据
         except ValueError as exc:
             self.__log_debug("x RTCP parsing failed: %s", exc)
             return
 
-        for packet in packets:
+        for packet in packets: #对于解析成功的每个 RTCP 包，通过路由器（_rtp_router）将 RTCP 包路由给相应的接收器。
             # route RTCP packet
-            for recipient in self._rtp_router.route_rtcp(packet):
+            for recipient in self._rtp_router.route_rtcp(packet): #调用相应接收器的 _handle_rtcp_packet 方法处理 RTCP 包
                 await recipient._handle_rtcp_packet(packet)
 
-    async def _handle_rtp_data(self, data: bytes, arrival_time_ms: int) -> None:
+    async def _handle_rtp_data(self, data: bytes, arrival_time_ms: int,arrival_24NTP_time:int) -> None:
         try:
             packet = RtpPacket.parse(data, self._rtp_header_extensions_map)
         except ValueError as exc:
@@ -490,7 +491,7 @@ class RTCDtlsTransport(AsyncIOEventEmitter):
         # route RTP packet
         receiver = self._rtp_router.route_rtp(packet)
         if receiver is not None:
-            await receiver._handle_rtp_packet(packet, arrival_time_ms=arrival_time_ms)
+            await receiver._handle_rtp_packet(packet, arrival_time_ms=arrival_time_ms,arrival_24NTP_time=arrival_24NTP_time)
 
     async def _recv_next(self) -> None:
         # get timeout
@@ -514,7 +515,7 @@ class RTCDtlsTransport(AsyncIOEventEmitter):
         self.__rx_packets += 1
 
         first_byte = data[0]
-        if first_byte > 19 and first_byte < 64:
+        if first_byte > 19 and first_byte < 64: #如果首字节表明是 DTLS 数据包尝试接收解密后的数据
             # DTLS
             self.ssl.bio_write(data)
             try:
@@ -529,16 +530,17 @@ class RTCDtlsTransport(AsyncIOEventEmitter):
                 raise ConnectionError
             elif data and self._data_receiver:
                 await self._data_receiver._handle_data(data)
-        elif first_byte > 127 and first_byte < 192 and self._rx_srtp:
+        elif first_byte > 127 and first_byte < 192 and self._rx_srtp:#如果首字节表明是 SRTP 或 SRTCP 数据包进行解密和处理
             # SRTP / SRTCP
             arrival_time_ms = clock.current_ms()
+            arrival_24NTP_time= ( clock.current_ntp_time() >> 14 ) & 0x00FFFFFF 
             try:
                 if is_rtcp(data):
                     data = self._rx_srtp.unprotect_rtcp(data)
                     await self._handle_rtcp_data(data)
                 else:
                     data = self._rx_srtp.unprotect(data)
-                    await self._handle_rtp_data(data, arrival_time_ms=arrival_time_ms)
+                    await self._handle_rtp_data(data, arrival_time_ms=arrival_time_ms,arrival_24NTP_time=arrival_24NTP_time)
             except pylibsrtp.Error as exc:
                 self.__log_debug("x SRTP unprotect failed: %s", exc)
 
@@ -571,7 +573,7 @@ class RTCDtlsTransport(AsyncIOEventEmitter):
 
         self.ssl.send(data)
         await self._write_ssl()
-    # 发送一个RTP packet
+    # 发送一个RTP 或RTCP packet
     async def _send_rtp(self, data: bytes) -> None:
         if self._state != State.CONNECTED:
             raise ConnectionError("Cannot send encrypted RTP, not connected")
@@ -602,13 +604,13 @@ class RTCDtlsTransport(AsyncIOEventEmitter):
 
     def _unregister_rtp_sender(self, sender) -> None:
         self._rtp_router.unregister_sender(sender)
-
+#用于将 OpenSSL 放入我们 BIO（生物识别物体）的出站数据刷新到传输（transport）中
     async def _write_ssl(self) -> None:
         """
         Flush outgoing data which OpenSSL put in our BIO to the transport.
         """
         try:
-            data = self.ssl.bio_read(1500)
+            data = self.ssl.bio_read(1500) # 从 OpenSSL 的 BIO 中读取最多 1500 字节的数据
         except SSL.Error:
             data = b""
         if data:

@@ -22,8 +22,8 @@ def datetime_from_ntp(ntp: int) -> datetime.datetime:
     return NTP_EPOCH + datetime.timedelta(seconds=seconds, microseconds=microseconds)
 
 
-def datetime_to_ntp(dt: datetime.datetime) -> int:
-    delta = dt - NTP_EPOCH
-    high = int(delta.total_seconds())
-    low = round((delta.microseconds * (1 << 32)) // 1000000)
+def datetime_to_ntp(dt: datetime.datetime) -> int:#将当前utc时间转换成NTP时间戳
+    delta = dt - NTP_EPOCH 
+    high = int(delta.total_seconds()) #s
+    low = round((delta.microseconds * (1 << 32)) // 1000000) #将微秒转换成NTP时间戳的后32位
     return (high << 32) | low

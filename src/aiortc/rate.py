@@ -523,7 +523,7 @@ class RemoteBitrateEstimator:
     def add(
         self, arrival_time_ms: int, abs_send_time: int, payload_size: int, ssrc: int
     ) -> Optional[Tuple[int, List[int]]]:
-        timestamp = abs_send_time << 8
+        timestamp = abs_send_time << 8 #将这个 24 位的时间戳转换成 32 位的 RTP 时间戳
         update_estimate = False
 
         # make note of SSRC

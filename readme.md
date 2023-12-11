@@ -42,7 +42,7 @@ answer信息解读：
       2. 在encode（）内部：编码得到NAL单元，将其分片打包成packet列表，加上RTP 扩展头打包成RTP包列表，调用RTCDtlsTransport的_send_rtp方法发送RTP packet
 
 
-在发送器中调用send方法启动RTP和RTCP任务
+
 
 ### 2. 会话和媒体描述
 **SessionDescription**： 描述该会话
@@ -51,7 +51,7 @@ answer信息解读：
 - kind
 - fmt
 - rtp：RTPParameters，包含支持的编解码器，头部扩展等
-### 1. 如何控制发送速率的
+### 3. 如何控制发送速率的
 接收器收到RTP数据包时调用_handle_rtp_packet方法，进行带宽估计并返回REMB反馈包RTCP_PSFB_APP
 RemoteBitrateEstimator进行比特率估计
 - incoming_bitrate
@@ -62,9 +62,10 @@ RemoteBitrateEstimator进行比特率估计
 - add()：返回目标比特率
   
 发送器接收到对端发来的REMB包后：receiver estimated maximum bitrate
+根据接收端delay based估计的带宽设置目标比特率，无pacer没有对发送速率的控制
 ### 2. 如何控制编码参数的
 1. 修改默认的编解码器
-   RTCRtpTransceiver的setCodecPreferences方法
+   方法一：RTCRtpTransceiver的setCodecPreferences方法
    ```
    def force_codec(pc, sender, forced_codec):
     kind = forced_codec.split("/")[0]
@@ -86,41 +87,11 @@ RemoteBitrateEstimator进行比特率估计
         transceiver.setCodecPreferences(preferences)
     ```
 ### 3. 能否强制P/B帧编码，帧类型是内部还是外部决定的
-
+可以强制PB编码，帧类型默认是编码器内部决定的，外部可强制更改
 ### 4. 测量和计算端到端延迟和帧率
 
 
-**RTCPRtpCodecParameters**用于设置编码参数
-
-
-    
-    The :class:`RTCRtpCodecParameters` dictionary provides information on
-    codec settings.
-
-    @dataclass
-    class RTCRtpCodecParameters:
-      mimeType: str
-      "The codec MIME media type/subtype, for instance `'audio/PCMU'`."
-      clockRate: int
-      "The codec clock rate expressed in Hertz."
-      channels: Optional[int] = None
-      "The number of channels supported (e.g. two for stereo)."
-      payloadType: Optional[int] = None
-      "The value that goes in the RTP Payload Type Field."
-      rtcpFeedback: List["RTCRtcpFeedback"] = field(default_factory=list)
-      "Transport layer and codec-specific feedback messages for this codec."
-      parameters: ParametersDict = field(default_factory=dict)
-      "Codec-specific parameters available for signaling."
-      """
-       @property
-    def name(self):
-        return self.mimeType.split("/")[1]
-
-    def __str__(self):
-        s = f"{self.name}/{self.clockRate}"
-        if self.channels == 2:
-            s += "/2"
-        return s
+### 5. 代码结构分析
 
 **RTCPeerConnection**作为RTP会话的实例
 方法：
@@ -131,6 +102,19 @@ createDataChannel（）创建数据通道，
 setRemoteDescription（）
 setLocalDescription（）
 **RTCDataChannel** 数据通道参数：标签 (label)、最大数据包生命周期 (maxPacketLifeTime)、最大重传次数 (maxRetransmits)、是否有序 (ordered)、协议 (protocol)、是否已协商 (negotiated) 和数据通道的标识符 (id)
+**RTCDtlsTransport**:数据（DTLS）传输层
+- transport RTCIceTransport
+- certificates: List[RTCCertificate]
+- start（）初始化设置，启动数据传输
+- __run（）执行数据传输的异步任务，调用_recv_next方法接收数据
+- _recv_next（）调用transport的recv方法接收数据并根据接收数据包的类型分别进行不同处理，调用_handle_rtcp_data和_handle_rtp_data方法分别进行处理
+- _handle_rtcp_data（）处理接收到的rtcp数据包：解析数据并将解析成功的数据路由到对应的接收器Recipient，并调用接收器的_handle_rtcp_packet方法
+- _handle_rtp_data（）处理接收到的rtp数据包：解析数据并将解析成功的数据路由到对应的接收器Receiver，并调用接收器的_handle_rtp_packet
+- _send_data():通过ssl发送数据，调用write_ssl方法。通用的用于发送任意加密数据。它不关心数据的类型，只是将传入的数据通过 SSL 连接发送出去。
+适用于发送各种类型的加密数据，不仅仅局限于 RTP 或 RTCP 数据。可以用于发送任何需要加密的数据。
+- _send_rtp()：直接发送数据包。专门用于 WebRTC 中实时传输中的 RTP 和 RTCP 数据的加密和发送
+**RTCIceTransport** ICE传输层
+- _recv（）
 **RTCRtpTransceiver传输器**用于描述一个 RTCRtpSender 和一个 RTCRtpReceiver 的永久配对，以及它们之间的一些共享状态
 参数：
         kind: str,传输的媒体类型
@@ -149,7 +133,7 @@ setCodecPreferences（）设置编解码器偏好，修改默认的编解码器
   - force_keyframe：是否强制发送关键帧
   - rtp_exited,rtp_header_extensions_map：用于处理RTP相关的状态和任务
   - rtcp_exited,rtcp_starteed：用于处理RTCP相关的状态和任务
-  - transport：与此发送器相关联的传输器对象
+  - transport：与此发送器相关联的传输器对象RTCDtlsTransport
   - track
 - 静态方法：
   - getCapabilities（）返回系统对编解码器，传输协议等的支持能力
@@ -171,7 +155,17 @@ setCodecPreferences（）设置编解码器偏好，修改默认的编解码器
 getCapabilities（）返回指定媒体类型（音频或视频）的发送器的能力capabilities
 
 **RTCRtpReceiver**负责接收和解码数据
-
+- __decoder_queue解码器队列：存放了可以解码的帧
+- __decoder_thread解码线程
+- __jitter_buffer：解码缓冲区
+- __remote_bitrate_estimator带宽估计器
+- __transport：RTCDtlsTransport
+- _track：解码后产生的视频数据流RemoteStreamTrack，解码帧存放在RemoteStreamTrack的_queue中
+- _handle_rtp_packet（） 处理接收到的RTP数据包：包括带宽估计，是否需要反馈NACK和FIR，解析RTP包获得编码数据并将其放入jitter，尝试组装解码帧
+- _handle_rtcp_packet（）处理接收到的SR类型RTCP包和BYE类型RTCP包
+- _send_rtcp_pli（）发送PLI类型的RTCP包
+- receive（）启动接收：启动解码线程
+- _run_rtcp（）启动RTCP包的反馈包发送：在一个无限循环中，间隔随机时间（0.5 到 1.5 秒之间）发送 RTCP RR（接收者报告）包。
 
 **MediaPlayer**作为输入mp4文件的容器，从音频或视频文件中读取数据源，参数：file, format, options, timeout, 是否重复loop, decode
         player = MediaPlayer(args.play_from)
@@ -179,7 +173,7 @@ getCapabilities（）返回指定媒体类型（音频或视频）的发送器�
 **MediaStreamTrack**媒体流，派生出AudioStreamTrack音频流和VideoStreamTrack视频流
 
 
-**MediaRecorder**媒体接收流
+**MediaRecorder**录制并存储视频流
 
 **VideoFrame**：
 参数：
@@ -191,7 +185,7 @@ getCapabilities（）返回指定媒体类型（音频或视频）的发送器�
     key_frame
     pict_type:表示帧类型B/BI/I/P/S/SI/SP
     time_base：时间基，表示每个刻度是多少秒
-### 编码器部分
+### 6. 编码器部分
 基类：Encoder（base.py）
 派生类：
   - Vp8Encoder
@@ -206,6 +200,51 @@ getCapabilities（）返回指定媒体类型（音频或视频）的发送器�
     - codec
     - codec_buffering
     - __target_bitrate
-### 1. 是否有pacer机制
 
 
+### 7. 时间系统
+1. Frame
+   - dts
+   - index
+   - pts
+   - time
+   - time base：Fraction（1，24000）
+2. 时间基转换
+时间基本质上是一个表示时间单位的分数，通常以秒为单位
+编码过程：
+- 将frame.pts从frame.timebase时间基转换到VIDEO_CLOCK_RATE时间基，得到timestamp
+- 
+VIDEO_CLOCK_RATE = 90000
+VIDEO_TIME_BASE = fractions.Fraction(1, VIDEO_CLOCK_RATE)
+
+3. abs send time
+  abs-send-time： 是6+18固定24位浮点数，高6位单位为秒(最大26=64s)，低18位单位为1/(218)秒(约3.8us)
+
+配置扩展信息
+HEADER_EXTENSIONS: Dict[str, List[RTCRtpHeaderExtensionParameters]] = {
+    "audio": [
+        RTCRtpHeaderExtensionParameters(
+            id=1, uri="urn:ietf:params:rtp-hdrext:sdes:mid"
+        ),
+        RTCRtpHeaderExtensionParameters(
+            id=2, uri="urn:ietf:params:rtp-hdrext:ssrc-audio-level"
+        ),
+    ],
+    "video": [
+        RTCRtpHeaderExtensionParameters(
+            id=1, uri="urn:ietf:params:rtp-hdrext:sdes:mid"
+        ),
+        RTCRtpHeaderExtensionParameters(
+            id=3, uri="http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time"
+        ),
+         RTCRtpHeaderExtensionParameters(
+            id=3, uri="urn:ietf:params:rtp-hdrext:sdes:marker_first"
+        ),
+    ],
+}
+4. 发送端计算RTT
+RTT = 接收RR包时间-发送SR包时间-DLSR(接收端发送RR包-接收SR包时间)
+![](.assert/be1dd07514154188a337a81a44818843.png)
+### 作为发送端为什么会接收到RTP数据包？作为接收端发出的RTP数据包是什么？
+
+## 三、搭建渲染模块

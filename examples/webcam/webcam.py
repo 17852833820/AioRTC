@@ -5,11 +5,14 @@ import logging
 import os
 import platform
 import ssl
+import sys
+
+sys.path.append("/mnt/e/ying/OneDrive - hust.edu.cn/Documents/毕业论文/新题-实验/Project/aiortc")
 
 from aiohttp import web
-from aiortc import RTCPeerConnection, RTCSessionDescription
-from aiortc.contrib.media import MediaPlayer, MediaRelay
-from aiortc.rtcrtpsender import RTCRtpSender
+from src.aiortc import RTCPeerConnection, RTCSessionDescription
+from src.aiortc.contrib.media import MediaPlayer, MediaRelay
+from src.aiortc.rtcrtpsender import RTCRtpSender
 
 ROOT = os.path.dirname(__file__)
 
@@ -49,12 +52,12 @@ def force_codec(pc, sender, forced_codec):
         [codec for codec in codecs if codec.mimeType == forced_codec]
     )#将编解码器偏好设置为仅包含符合指定 forced_codec 的媒体类型的编解码器
 
-
+#接收到HTTP请求时，读取本地的"index.html"文件，并将其作为HTML响应发送给客户端
 async def index(request):
     content = open(os.path.join(ROOT, "index.html"), "r").read()
     return web.Response(content_type="text/html", text=content)
 
-
+#client.js负责处理与WebRTC相关的逻辑:打开一个名为"client.js"的文件，读取其内容，然后将内容作为JavaScript响应返回给客户端
 async def javascript(request):
     content = open(os.path.join(ROOT, "client.js"), "r").read()
     return web.Response(content_type="application/javascript", text=content)
@@ -133,7 +136,7 @@ if __name__ == "__main__":
         "--host", default="0.0.0.0", help="Host for HTTP server (default: 0.0.0.0)"
     )
     parser.add_argument(
-        "--port", type=int, default=8080, help="Port for HTTP server (default: 8080)"
+        "--port", type=int, default=5060, help="Port for HTTP server (default: 8080)"
     )
     parser.add_argument("--verbose", "-v", action="count")
     parser.add_argument(

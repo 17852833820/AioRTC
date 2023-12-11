@@ -15,7 +15,7 @@ VIDEO_CLOCK_RATE = 90000
 VIDEO_PTIME = 1 / 30  # 30fps
 VIDEO_TIME_BASE = fractions.Fraction(1, VIDEO_CLOCK_RATE)
 
-
+#将给定的时间戳（pts）从一个时间基（from_base）转换为另一个时间基（to_base）
 def convert_timebase(
     pts: int, from_base: fractions.Fraction, to_base: fractions.Fraction
 ) -> int:

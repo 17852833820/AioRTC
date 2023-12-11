@@ -29,9 +29,14 @@ from .stats import (RTCInboundRtpStreamStats, RTCRemoteOutboundRtpStreamStats,
 from .utils import uint16_add, uint16_gt
 
 logger = logging.getLogger(__name__)
+# abs-send-time estimator
+INTER_ARRIVAL_SHIFT = 26
+TIMESTAMP_GROUP_LENGTH_MS = 5
+TIMESTAMP_TO_MS = 1000.0 / (1 << INTER_ARRIVAL_SHIFT)
 
-
+# 解码线程主任务
 def decoder_worker(loop, input_q, output_q):
+    #初始化：用于追踪当前的解码器和编码器名称
     codec_name = None
     decoder = None
     __log_debug: Callable[..., None] = lambda *args: None
@@ -40,21 +45,21 @@ def decoder_worker(loop, input_q, output_q):
             f"RTCRtpReceiver(%s) {msg}", 'decoder_worker', *args
         )
 
-    while True:
-        task = input_q.get()
-        if task is None:
+    while True:#任务处理无限循环
+        task = input_q.get() #等待从输入队列 (input_q) 获取任务
+        if task is None:# 如果获取到的任务为 None，表示线程结束，将 None 放入输出队列 (output_q) 并终止循环。
             # inform the track that is has ended
             asyncio.run_coroutine_threadsafe(output_q.put(None), loop)
             break
         codec, encoded_frame = task
 
-        if codec.name != codec_name:
+        if codec.name != codec_name: #检查编解码器是否匹配
             decoder = get_decoder(codec)
             codec_name = codec.name
-
+        #使用解码器对编码帧进行解码，得到解码后的帧
         for frame in decoder.decode(encoded_frame):
             # pass the decoded frame to the track
-            asyncio.run_coroutine_threadsafe(output_q.put(frame), loop)
+            asyncio.run_coroutine_threadsafe(output_q.put(frame), loop) #将解码后的帧（frame）放入输出队列
         
         now = clock.current_ms()
         dec_dur = now - encoded_frame.times_dur['time_in_dec_q']
@@ -289,6 +294,9 @@ class RTCRtpReceiver:
             self.__log_debug = lambda msg, *args: logger.debug(
                 f"RTCRtpReceiver(%s) {msg}", self.__kind, *args
             )
+        # 计算frame 传输时间
+        self.first_send_time=0
+        self.last_recv_time=0
 
     @property
     def track(self) -> MediaStreamTrack:
@@ -370,7 +378,7 @@ class RTCRtpReceiver:
                 if encoding.rtx:
                     self.__rtx_ssrc[encoding.rtx.ssrc] = encoding.ssrc
 
-            # start decoder thread
+            # start decoder thread 启动一个用于解码传入媒体数据包的单独线程，该线程运行 decoder_worker 函数
             self.__decoder_thread = threading.Thread(
                 target=decoder_worker,
                 name=self.__kind + "-decoder",
@@ -407,10 +415,9 @@ class RTCRtpReceiver:
 
     async def _handle_rtcp_packet(self, packet: AnyRtcpPacket) -> None:
         self.__log_debug("< %s", packet)
-
         if isinstance(packet, RtcpSrPacket):
             self.__stats.add(
-                RTCRemoteOutboundRtpStreamStats(
+                RTCRemoteOutboundRtpStreamStats(#记录远程传输统计信息，如发送的数据包数、发送的字节数等
                     # RTCStats
                     timestamp=clock.current_datetime(),
                     type="remote-outbound-rtp",
@@ -428,30 +435,30 @@ class RTCRtpReceiver:
                     ),
                 )
             )
-            self.__lsr[packet.ssrc] = (
+            self.__lsr[packet.ssrc] = (#更新最后 SR（LSR）时间戳和时间
                 (packet.sender_info.ntp_timestamp) >> 16
             ) & 0xFFFFFFFF
             self.__lsr_time[packet.ssrc] = time.time()
         elif isinstance(packet, RtcpByePacket):
             self.__stop_decoder()
 
-    async def _handle_rtp_packet(self, packet: RtpPacket, arrival_time_ms: int) -> None:
+    async def _handle_rtp_packet(self, packet: RtpPacket, arrival_time_ms: int,arrival_24NTP_time:int) -> None:
         """
-        Handle an incoming RTP packet.
+        Handle an incoming RTP packet. 处理接收的RTP数据包
         """
         self.__log_debug("< %s", packet)
 
-        # feed bitrate estimator 收到RTP包时更新带宽估计
+        # feed bitrate estimato 如果启用了远程带宽估计：收到RTP包时更新带宽估计
         if self.__remote_bitrate_estimator is not None:
-            if packet.extensions.abs_send_time is not None:
+            if packet.extensions.abs_send_time is not None:#RTP 包包含绝对发送时间
                 remb = self.__remote_bitrate_estimator.add(
                     abs_send_time=packet.extensions.abs_send_time,
                     arrival_time_ms=arrival_time_ms,
                     payload_size=len(packet.payload) + packet.padding_size,
                     ssrc=packet.ssrc,
                 )
-                if self.__rtcp_ssrc is not None and remb is not None:
-                    # send Receiver Estimated Maximum Bitrate feedback
+                if self.__rtcp_ssrc is not None and remb is not None: 
+                    # send Receiver Estimated Maximum Bitrate feedback 发送REMB包反馈估计的最大比特率
                     rtcp_packet = RtcpPsfbPacket(
                         fmt=RTCP_PSFB_APP,
                         ssrc=self.__rtcp_ssrc,
@@ -459,11 +466,25 @@ class RTCRtpReceiver:
                         fci=pack_remb_fci(*remb),
                     )
                     await self._send_rtcp(rtcp_packet)
-
+        # 计算 frame 传输延迟
+        # if packet.extensions.abs_send_time is not None and packet.extensions.marker_first=="1": #第一个packet的发送时间
+        #     self.first_send_time=packet.extensions.abs_send_time
+        # if packet.marker: #最后一个packet的接收时间
+        #     current_24NTP_time= ( clock.current_ntp_time() >> 14 ) & 0x00FFFFFF 
+        #     self.last_recv_time=current_24NTP_time #current ms
+        #     self.__log_debug('[FRAME_INFO]  transport dur: %d ms', self.last_recv_time-self.first_send_time)
+            
+        if packet.extensions.abs_send_time is not None : #第一个packet的发送时间
+            self.first_send_time=packet.extensions.abs_send_time
+            self.last_recv_time=arrival_24NTP_time
+            time=self.last_recv_time-self.first_send_time
+            time=time>>18
+            self.__log_debug('[FRAME_INFO]  transport dur: %d ms',time)
+           
         # keep track of sources
         self.__active_ssrc[packet.ssrc] = clock.current_datetime()
 
-        # check the codec is known
+        # check the codec is known 检查编解码器
         codec = self.__codecs.get(packet.payload_type)
         if codec is None:
             self.__log_debug(
@@ -476,7 +497,7 @@ class RTCRtpReceiver:
             self.__remote_streams[packet.ssrc] = StreamStatistics(codec.clockRate)
         self.__remote_streams[packet.ssrc].add(packet)
 
-        # unwrap retransmission packet
+        # unwrap retransmission packet 
         if is_rtx(codec):
             original_ssrc = self.__rtx_ssrc.get(packet.ssrc)
             if original_ssrc is None:
@@ -497,7 +518,7 @@ class RTCRtpReceiver:
                 packet.ssrc, sorted(self.__nack_generator.missing)
             )
 
-        # parse codec-specific information
+        # parse codec-specific information 解析 RTP 包的负载，获取编码帧的相关信息
         try:
             if packet.payload:
                 packet._data = depayload(codec, packet.payload)  # type: ignore
@@ -507,15 +528,15 @@ class RTCRtpReceiver:
             self.__log_debug("x RTP payload parsing failed: %s", exc)
             return
 
-        # try to re-assemble encoded frame
-        pli_flag, (encoded_frame, jit_dur) = self.__jitter_buffer.add(packet)
-        if jit_dur is not None:
+        # try to re-assemble encoded frame 尝试重新组装编码帧
+        pli_flag, (encoded_frame, jit_dur) = self.__jitter_buffer.add(packet)#向抖动缓冲区（Jitter Buffer）添加 RTP 包
+        if jit_dur is not None: 
             self.__log_debug('[FRAME_INFO] T: %d, jit_dur: %d, Bytes: %d', encoded_frame.timestamp, jit_dur, len(encoded_frame.data))
-        # check if the PLI should be sent
+        # check if the PLI should be sent 如果成功获得完整的编码帧，检查是否需要发送PLI RTCP包
         if pli_flag:
             await self._send_rtcp_pli(packet.ssrc)
 
-        # if we have a complete encoded frame, decode it
+        # if we have a complete encoded frame, decode it 将解码请求放入解码器队列__decoder_queue
         if encoded_frame is not None and self.__decoder_thread:
             encoded_frame.timestamp = self.__timestamp_mapper.map(
                 encoded_frame.timestamp

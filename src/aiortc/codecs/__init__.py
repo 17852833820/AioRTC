@@ -1,14 +1,10 @@
 from typing import Dict, List, Optional, Union
 
-from ..rtcrtpparameters import (
-    ParametersDict,
-    RTCRtcpFeedback,
-    RTCRtpCapabilities,
-    RTCRtpCodecCapability,
-    RTCRtpCodecParameters,
-    RTCRtpHeaderExtensionCapability,
-    RTCRtpHeaderExtensionParameters,
-)
+from ..rtcrtpparameters import (ParametersDict, RTCRtcpFeedback,
+                                RTCRtpCapabilities, RTCRtpCodecCapability,
+                                RTCRtpCodecParameters,
+                                RTCRtpHeaderExtensionCapability,
+                                RTCRtpHeaderExtensionParameters)
 from .base import Decoder, Encoder
 from .g711 import PcmaDecoder, PcmaEncoder, PcmuDecoder, PcmuEncoder
 from .h264 import H264Decoder, H264Encoder, h264_depayload
@@ -50,6 +46,9 @@ HEADER_EXTENSIONS: Dict[str, List[RTCRtpHeaderExtensionParameters]] = {
         ),
         RTCRtpHeaderExtensionParameters(
             id=3, uri="http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time"
+        ),
+         RTCRtpHeaderExtensionParameters(
+            id=2, uri="urn:ietf:params:rtp-hdrext:sdes:marker_first"
         ),
     ],
 }

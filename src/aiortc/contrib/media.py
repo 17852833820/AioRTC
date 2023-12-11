@@ -82,7 +82,7 @@ class MediaBlackhole:
                 task.cancel()
         self.__tracks = {}
 
-
+#用于播放媒体流的工作线程
 def player_worker_decode(
     loop,
     container,
@@ -93,9 +93,11 @@ def player_worker_decode(
     throttle_playback,
     loop_playback,
 ):
+    #设置音频相关的参数
     audio_sample_rate = 48000
     audio_samples = 0
     audio_time_base = fractions.Fraction(1, audio_sample_rate)
+    #初始化音频重采样器
     audio_resampler = av.AudioResampler(
         format="s16",
         layout="stereo",
@@ -103,12 +105,12 @@ def player_worker_decode(
         frame_size=int(audio_sample_rate * AUDIO_PTIME),
     )
 
-    video_first_pts = None
+    video_first_pts = None #记录视频第一帧的 PTS，用于修正后续视频帧的 PTS
 
     frame_time = None
     start_time = time.time()
 
-    while not quit_event.is_set():
+    while not quit_event.is_set(): #从媒体容器中逐帧解码音频和视频
         try:
             frame = next(container.decode(*streams))
         except Exception as exc:
@@ -124,13 +126,13 @@ def player_worker_decode(
                 asyncio.run_coroutine_threadsafe(video_track._queue.put(None), loop)
             break
 
-        # read up to 1 second ahead
+        # read up to 1 second ahead 如果启用节流播放，根据已经过的时间和当前帧的时间戳进行休眠，控制播放速度。
         if throttle_playback:
             elapsed_time = time.time() - start_time
             if frame_time and frame_time > elapsed_time + 1:
                 time.sleep(0.1)
 
-        if isinstance(frame, AudioFrame) and audio_track:
+        if isinstance(frame, AudioFrame) and audio_track: #将解码后的音频帧通过 audio_track._queue.put(frame) 放入音频轨道的队列中。
             for frame in audio_resampler.resample(frame):
                 # fix timestamps
                 frame.pts = audio_samples
@@ -139,7 +141,7 @@ def player_worker_decode(
 
                 frame_time = frame.time
                 asyncio.run_coroutine_threadsafe(audio_track._queue.put(frame), loop)
-        elif isinstance(frame, VideoFrame) and video_track:
+        elif isinstance(frame, VideoFrame) and video_track: #将解码后的视频帧通过 video_track._queue.put(frame) 放入视频轨道的队列中。
             if frame.pts is None:  # pragma: no cover
                 logger.warning(
                     "MediaPlayer(%s) Skipping video frame with no pts", container.name
@@ -154,7 +156,7 @@ def player_worker_decode(
             frame_time = frame.time
             asyncio.run_coroutine_threadsafe(video_track._queue.put(frame), loop)
 
-
+#从媒体容器中解封装（demux）媒体包，并将其放入相应的音频和视频轨道队列中，以供后续解码和播放
 def player_worker_demux(
     loop,
     container,
@@ -260,7 +262,7 @@ class PlayerStreamTrack(MediaStreamTrack):
             self._player._stop(self)
             self._player = None
 
-
+#从文件或其他媒体源中读取音频和/或视频
 class MediaPlayer:
     """
     A media source that reads audio and/or video from a file.
@@ -302,7 +304,7 @@ class MediaPlayer:
     def __init__(
         self, file, format=None, options=None, timeout=None, loop=False, decode=True
     ):
-        self.__container = av.open(
+        self.__container = av.open( #打开媒体文件，并检查其中的音频和视频流
             file=file, format=format, mode="r", options=options, timeout=timeout
         )
         self.__thread: Optional[threading.Thread] = None
@@ -332,13 +334,15 @@ class MediaPlayer:
 
         # check whether we need to throttle playback
         container_format = set(self.__container.format.name.split(","))
-        self._throttle_playback = not container_format.intersection(REAL_TIME_FORMATS)
+        self._throttle_playback = not container_format.intersection(REAL_TIME_FORMATS) #检查是否需要节流播放
 
         # check whether the looping is supported
         assert (
             not loop or self.__container.duration is not None
         ), "The `loop` argument requires a seekable file"
-        self._loop_playback = loop
+        self._loop_playback = loop #检查是否支持循环播放
+        # 禁用音频编码
+        self.__audio=None
 
     @property
     def audio(self) -> MediaStreamTrack:
@@ -346,7 +350,7 @@ class MediaPlayer:
         A :class:`aiortc.MediaStreamTrack` instance if the file contains audio.
         """
         return self.__audio
-
+    #返回包含视频的 MediaStreamTrack 实例
     @property
     def video(self) -> MediaStreamTrack:
         """
@@ -355,8 +359,8 @@ class MediaPlayer:
         return self.__video
 
     def _start(self, track: PlayerStreamTrack) -> None:
-        self.__started.add(track)
-        if self.__thread is None:
+        self.__started.add(track) #将调用该方法的 PlayerStreamTrack 实例添加到 __started 集合中，以追踪已经启动的 PlayerStreamTrack
+        if self.__thread is None: #启动一个新的工作线程
             self.__log_debug("Starting worker thread")
             self.__thread_quit = threading.Event()
             self.__thread = threading.Thread(
@@ -443,15 +447,15 @@ class MediaRecorder:
             else:
                 stream = self.__container.add_stream("libx264", rate=30)
                 stream.pix_fmt = "yuv420p"
-        self.__tracks[track] = MediaRecorderContext(stream)
+        self.__tracks[track] = MediaRecorderContext(stream) #记录一路视频流
 
     async def start(self):
         """
         Start recording.
         """
-        for track, context in self.__tracks.items():
+        for track, context in self.__tracks.items():#遍历一路视频流
             if context.task is None:
-                context.task = asyncio.ensure_future(self.__run_track(track, context))
+                context.task = asyncio.ensure_future(self.__run_track(track, context)) #异步运行每个轨道的录制任务
 
     async def stop(self):
         """
@@ -469,11 +473,11 @@ class MediaRecorder:
             if self.__container:
                 self.__container.close()
                 self.__container = None
-
+    # 执行每个轨道的录制任务
     async def __run_track(self, track: MediaStreamTrack, context: MediaRecorderContext):
         while True:
             try:
-                frame = await track.recv()
+                frame = await track.recv() #从音频/视频轨道接收帧
             except MediaStreamError:
                 return
 
@@ -484,10 +488,10 @@ class MediaRecorder:
                     context.stream.height = frame.height
                 context.started = True
 
-            for packet in context.stream.encode(frame):
-                self.__container.mux(packet)
+            for packet in context.stream.encode(frame):#编码帧并获取编码数据
+                self.__container.mux(packet) #将编码数据写入容器
 
-
+#用于在媒体轨道之间进行中继传输
 class RelayStreamTrack(MediaStreamTrack):
     def __init__(self, relay, source: MediaStreamTrack, buffered: bool) -> None:
         super().__init__()
