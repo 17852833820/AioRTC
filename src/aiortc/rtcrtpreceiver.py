@@ -200,6 +200,7 @@ class RemoteStreamTrack(MediaStreamTrack):
         if frame is None:
             self.stop()
             raise MediaStreamError
+        
         return frame
 
 
@@ -384,8 +385,8 @@ class RTCRtpReceiver:
                 name=self.__kind + "-decoder",
                 args=(
                     asyncio.get_event_loop(),
-                    self.__decoder_queue,
-                    self._track._queue,
+                    self.__decoder_queue,#待解码的队列
+                    self._track._queue,#解码后输出的队列
                 ),
             )
             self.__decoder_thread.start()

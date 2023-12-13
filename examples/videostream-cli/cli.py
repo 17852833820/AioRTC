@@ -8,8 +8,8 @@ import sys
 import cv2
 import numpy
 from av import VideoFrame
-
-sys.path.append("/mnt/e/ying/OneDrive - hust.edu.cn/Documents/毕业论文/新题-实验/Project/aiortc")
+sys.path.append("/Users/ying/Library/CloudStorage/OneDrive-hust.edu.cn/Documents/毕业论文/新题-实验/Project/aiortc")
+# sys.path.append("/mnt/e/ying/OneDrive - hust.edu.cn/Documents/毕业论文/新题-实验/Project/aiortc")
 from src.aiortc import (RTCIceCandidate, RTCPeerConnection,
                         RTCSessionDescription, VideoStreamTrack)
 from src.aiortc.contrib.media import MediaBlackhole, MediaPlayer, MediaRecorder
@@ -159,8 +159,10 @@ if __name__ == "__main__":
     # create media source
     if args.play_from:
         player = MediaPlayer(args.play_from)
+        cv2.namedWindow("SendVideo", cv2.WINDOW_NORMAL)
     else:
         player = None
+        cv2.namedWindow("RecvVideo", cv2.WINDOW_NORMAL)
 
     # create media sink
     if args.record_to:

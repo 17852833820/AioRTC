@@ -8,6 +8,8 @@ import sys
 import uuid
 
 sys.path.append("/mnt/e/ying/OneDrive - hust.edu.cn/Documents/毕业论文/新题-实验/Project/aiortc")
+
+# sys.path.append("/Users/ying/OneDrive - hust.edu.cn/Documents/毕业论文/新题-实验/Project/aiortc")
 import cv2
 from aiohttp import web
 from av import VideoFrame
@@ -188,13 +190,22 @@ if __name__ == "__main__":
     parser.add_argument("--cert-file", help="SSL certificate file (for HTTPS)")
     parser.add_argument("--key-file", help="SSL key file (for HTTPS)")
     parser.add_argument(
-        "--host", default="0.0.0.0", help="Host for HTTP server (default: 0.0.0.0)"
+        "--host", default="127.0.0.1", help="Host for HTTP server (default: 0.0.0.0)"
     )
     parser.add_argument(
         "--port", type=int, default=9024, help="Port for HTTP server (default: 8080)"
     )
     parser.add_argument("--record-to", help="Write received media to a file."),
     parser.add_argument("--verbose", "-v", action="count")
+    parser.add_argument("--play-from", help="Read the media from a file and sent it."),
+    parser.add_argument(
+        "--play-without-decoding",
+        help=(
+            "Read the media without decoding it (experimental). "
+            "For now it only works with an MPEGTS container with only H.264 video."
+        ),
+        action="store_true",
+    )
     args = parser.parse_args()
 
     if args.verbose:

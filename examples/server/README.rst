@@ -4,7 +4,8 @@ Audio, video and data channel server
 This example illustrates establishing audio, video and a data channel with a
 browser. It also performs some image processing on the video frames using
 OpenCV.
-
+这个程序是一个 WebRTC 的服务器端实现，负责处理客户端的请求，接收 SDP offer，然后发送 SDP answer
+server作为接收端，client.js作为发送端
 Running
 -------
 

@@ -3,7 +3,7 @@ Webcam server
 
 This example illustrates how to read frames from a webcam and send them
 to a browser.
-
+从网络摄像头读取帧并将它们发送到浏览器：webcam作为发送端，client.js作为接收端
 Running
 -------
 

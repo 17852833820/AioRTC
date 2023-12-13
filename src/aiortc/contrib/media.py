@@ -7,6 +7,7 @@ import time
 from typing import Dict, Optional, Set, Union
 
 import av
+import cv2
 from av import AudioFrame, VideoFrame
 from av.audio import AudioStream
 from av.frame import Frame
@@ -14,7 +15,6 @@ from av.packet import Packet
 from av.video.stream import VideoStream
 
 from ..mediastreams import AUDIO_PTIME, MediaStreamError, MediaStreamTrack
-
 logger = logging.getLogger(__name__)
 
 REAL_TIME_FORMATS = [
@@ -109,7 +109,6 @@ def player_worker_decode(
 
     frame_time = None
     start_time = time.time()
-
     while not quit_event.is_set(): #从媒体容器中逐帧解码音频和视频
         try:
             frame = next(container.decode(*streams))
@@ -154,6 +153,7 @@ def player_worker_decode(
             frame.pts -= video_first_pts
 
             frame_time = frame.time
+         
             asyncio.run_coroutine_threadsafe(video_track._queue.put(frame), loop)
 
 #从媒体容器中解封装（demux）媒体包，并将其放入相应的音频和视频轨道队列中，以供后续解码和播放
@@ -220,14 +220,13 @@ def player_worker_demux(
             asyncio.run_coroutine_threadsafe(track._queue.put(packet), loop)
 
 
-class PlayerStreamTrack(MediaStreamTrack):
+class  PlayerStreamTrack(MediaStreamTrack):
     def __init__(self, player, kind):
         super().__init__()
         self.kind = kind
         self._player = player
         self._queue = asyncio.Queue()
         self._start = None
-
     async def recv(self) -> Union[Frame, Packet]:#获取媒体流中的数据进行编码
         if self.readyState != "live":
             raise MediaStreamError
@@ -239,6 +238,9 @@ class PlayerStreamTrack(MediaStreamTrack):
             raise MediaStreamError
         if isinstance(data, Frame):
             data_time = data.time
+            image = data.to_ndarray(format="bgr24")
+            cv2.imshow("SendVideo", image)
+            cv2.waitKey(1)
         elif isinstance(data, Packet):
             data_time = float(data.pts * data.time_base)
 
@@ -313,11 +315,14 @@ class MediaPlayer:
         # examine streams
         self.__started: Set[PlayerStreamTrack] = set()
         self.__streams = []
+        # self.__videostream=Optional[VideoStream] = None
+        # self.__audiostream=Optional[AudioStream] = None
         self.__decode = decode
         self.__audio: Optional[PlayerStreamTrack] = None
         self.__video: Optional[PlayerStreamTrack] = None
         for stream in self.__container.streams:
             if stream.type == "audio" and not self.__audio:
+                # self.__audiostream=stream
                 if self.__decode:
                     self.__audio = PlayerStreamTrack(self, kind="audio")
                     self.__streams.append(stream)
@@ -325,6 +330,7 @@ class MediaPlayer:
                     self.__audio = PlayerStreamTrack(self, kind="audio")
                     self.__streams.append(stream)
             elif stream.type == "video" and not self.__video:
+                # self.__videostream=stream
                 if self.__decode:
                     self.__video = PlayerStreamTrack(self, kind="video")
                     self.__streams.append(stream)
@@ -357,7 +363,15 @@ class MediaPlayer:
         A :class:`aiortc.MediaStreamTrack` instance if the file contains video.
         """
         return self.__video
-
+    # @property
+    # def videostream(self) -> VideoStream:
+    #     return self.__videostream
+    # @property
+    # def audiostream(self) -> AudioStream:
+    #     return self.__audiostream
+    # @property
+    # def stream(self) -> List[MediaStream]:
+    #     return self.__streams
     def _start(self, track: PlayerStreamTrack) -> None:
         self.__started.add(track) #将调用该方法的 PlayerStreamTrack 实例添加到 __started 集合中，以追踪已经启动的 PlayerStreamTrack
         if self.__thread is None: #启动一个新的工作线程
@@ -480,14 +494,17 @@ class MediaRecorder:
                 frame = await track.recv() #从音频/视频轨道接收帧
             except MediaStreamError:
                 return
-
+           
             if not context.started:
                 # adjust the output size to match the first frame
                 if isinstance(frame, VideoFrame):
                     context.stream.width = frame.width
                     context.stream.height = frame.height
                 context.started = True
-
+            # 实时渲染播放接收视频
+            image = frame.to_ndarray(format="bgr24")
+            cv2.imshow("RecvVideo", image)
+            cv2.waitKey(1)
             for packet in context.stream.encode(frame):#编码帧并获取编码数据
                 self.__container.mux(packet) #将编码数据写入容器
 

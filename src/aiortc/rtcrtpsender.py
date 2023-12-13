@@ -6,6 +6,7 @@ import traceback
 import uuid
 from typing import Callable, Dict, List, Optional, Union
 
+import cv2
 from av import AudioFrame
 from av.frame import Frame
 
@@ -275,6 +276,7 @@ class RTCRtpSender:
             payloads, timestamp = await self.__loop.run_in_executor(
                 None, self.__encoder.encode, data, force_keyframe
             )
+            
         else:#调用编码器的pack方法执行编码
             payloads, timestamp = self.__encoder.pack(data)
         te = clock.current_ms()#获取编码结束时间戳
@@ -314,6 +316,7 @@ class RTCRtpSender:
         timestamp_origin = random32()#初始化一个随机的初始时间和随机的初始包序号
         self.__log_debug('[FRAME_INFO] Timestamp_origin: %d, Sequence_number: %d',timestamp_origin, sequence_number)
         frame_number=0
+        
         try:
             while True:#主循环：不断获取下一个编码帧，遍历帧中的payload并创建RTP数据包发送
                 if not self.__track:

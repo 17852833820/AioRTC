@@ -8,6 +8,7 @@ import ssl
 import sys
 
 sys.path.append("/mnt/e/ying/OneDrive - hust.edu.cn/Documents/毕业论文/新题-实验/Project/aiortc")
+# sys.path.append("/Users/ying/OneDrive - hust.edu.cn/Documents/毕业论文/新题-实验/Project/aiortc")
 
 from aiohttp import web
 from src.aiortc import RTCPeerConnection, RTCSessionDescription
@@ -52,11 +53,11 @@ def force_codec(pc, sender, forced_codec):
         [codec for codec in codecs if codec.mimeType == forced_codec]
     )#将编解码器偏好设置为仅包含符合指定 forced_codec 的媒体类型的编解码器
 
-#接收到HTTP请求时，读取本地的"index.html"文件，并将其作为HTML响应发送给客户端
+#接收到HTTP GET请求时，读取本地的"index.html"文件，并将其作为HTML响应发送给客户端
 async def index(request):
     content = open(os.path.join(ROOT, "index.html"), "r").read()
     return web.Response(content_type="text/html", text=content)
-
+#接收到HTTP GET请求时，调用javascript返回客户端一个响应
 #client.js负责处理与WebRTC相关的逻辑:打开一个名为"client.js"的文件，读取其内容，然后将内容作为JavaScript响应返回给客户端
 async def javascript(request):
     content = open(os.path.join(ROOT, "client.js"), "r").read()
@@ -100,7 +101,7 @@ async def offer(request):
 
     answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
-
+    # POST请求返回响应
     return web.Response(
         content_type="application/json",
         text=json.dumps(
@@ -133,10 +134,10 @@ if __name__ == "__main__":
         action="store_true",
     )
     parser.add_argument(
-        "--host", default="0.0.0.0", help="Host for HTTP server (default: 0.0.0.0)"
+        "--host", default="127.0.0.1", help="Host for HTTP server (default: 0.0.0.0)"
     )
     parser.add_argument(
-        "--port", type=int, default=5060, help="Port for HTTP server (default: 8080)"
+        "--port", type=int, default=9025, help="Port for HTTP server (default: 8080)"
     )
     parser.add_argument("--verbose", "-v", action="count")
     parser.add_argument(
@@ -159,9 +160,9 @@ if __name__ == "__main__":
     else:
         ssl_context = None
 
-    app = web.Application()
-    app.on_shutdown.append(on_shutdown)
-    app.router.add_get("/", index)
-    app.router.add_get("/client.js", javascript)
-    app.router.add_post("/offer", offer)
+    app = web.Application() #创建一个 aiohttp 的 Web 应用程序实例。
+    app.on_shutdown.append(on_shutdown)#注册应用程序关闭时要执行的回调函数 on_shutdown
+    app.router.add_get("/", index)#定义一个 GET 请求的路由，当用户访问根路径 / 时，将调用 index 处理函数
+    app.router.add_get("/client.js", javascript)#定义一个 GET 请求的路由，当用户访问路径 /client.js 时，将调用 javascript 处理函数
+    app.router.add_post("/offer", offer)#定义一个 POST 请求的路由，当用户提交 POST 请求到路径 /offer 时，将调用 offer 处理函数
     web.run_app(app, host=args.host, port=args.port, ssl_context=ssl_context)

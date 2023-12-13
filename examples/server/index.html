@@ -69,6 +69,7 @@
         <option value="VP8/90000">VP8</option>
         <option value="H264/90000">H264</option>
     </select>
+    <input type="file" id="fileInput" />
 </div>
 <div class="option">
     <input id="use-stun" type="checkbox"/>
@@ -89,13 +90,18 @@
     Signaling state: <span id="signaling-state"></span>
 </p>
 
-<div id="media" style="display: none">
-    <h2>Media</h2>
+<div id="send_media" style="display: none">
+    <h2>Send Media</h2>
 
-    <audio id="audio" autoplay="true"></audio>
-    <video id="video" autoplay="true" playsinline="true"></video>
+    <audio id="send_audio" autoplay="true"></audio>
+    <video id="send_video" autoplay="true" playsinline="true"></video>
 </div>
+<div id="recv_media" style="display: none">
+    <h2>Recv Media</h2>
 
+    <audio id="recv_audio" autoplay="true"></audio>
+    <video id="recv_video" autoplay="true" playsinline="true"></video>
+</div>
 <h2>Data channel</h2>
 <pre id="data-channel" style="height: 200px;"></pre>
 

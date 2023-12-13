@@ -3,7 +3,12 @@ var dataChannelLog = document.getElementById('data-channel'),
     iceConnectionLog = document.getElementById('ice-connection-state'),
     iceGatheringLog = document.getElementById('ice-gathering-state'),
     signalingLog = document.getElementById('signaling-state');
+    // 创建 video 元素
+var videoElement = document.createElement('video');
 
+// 设置 video 元素的 src 属性为本地 MP4 文件的路径
+videoElement.src = '/mnt/e/ying/OneDrive - hust.edu.cn/Documents/毕业论文/新题-实验/Project/aiortc/dataset/anamal-1080p.mp4';
+    // fileInput = document.getElementById('fileInput');
 // peer connection
 var pc = null;
 
@@ -40,9 +45,9 @@ function createPeerConnection() {
     // connect audio / video
     pc.addEventListener('track', function(evt) {
         if (evt.track.kind == 'video')
-            document.getElementById('video').srcObject = evt.streams[0];
+            document.getElementById('send_video').srcObject = evt.streams[0];
         else
-            document.getElementById('audio').srcObject = evt.streams[0];
+            document.getElementById('send_audio').srcObject = evt.streams[0];
     });
 
     return pc;
@@ -66,7 +71,8 @@ function negotiate() {
                 pc.addEventListener('icegatheringstatechange', checkState);
             }
         });
-    }).then(function() {
+    }).then(function() {// 生成 offer 的 SDP，并发送给服务器
+        // 之后从服务器接收 answer，并设置为远程描述
         var offer = pc.localDescription;
         var codec;
 
@@ -94,21 +100,27 @@ function negotiate() {
         });
     }).then(function(response) {
         return response.json();
-    }).then(function(answer) {
+    }).then(function(answer) {//处理从服务器返回的 answer
         document.getElementById('answer-sdp').textContent = answer.sdp;
         return pc.setRemoteDescription(answer);
     }).catch(function(e) {
         alert(e);
     });
 }
+function create_local_media(){
+    // var fileInput="/mnt/e/ying/OneDrive - hust.edu.cn/Documents/毕业论文/新题-实验/Project/aiortc/dataset/anamal-1080p.mp4"
+    fileInput = "./dataset/anamal-1080p.mp4"
+    player = MediaPlayer(fileInput, decode=True)
+    return player
 
+}
 function start() {
     document.getElementById('start').style.display = 'none';
 
     pc = createPeerConnection();
 
     var time_start = null;
-
+    //用于计算自连接开始以来经过的时间
     function current_stamp() {
         if (time_start === null) {
             time_start = new Date().getTime();
@@ -117,7 +129,7 @@ function start() {
             return new Date().getTime() - time_start;
         }
     }
-
+    //创建数据通道（如果选择使用数据通道）
     if (document.getElementById('use-datachannel').checked) {
         var parameters = JSON.parse(document.getElementById('datachannel-parameters').value);
 
@@ -161,23 +173,35 @@ function start() {
             constraints.video = true;
         }
     }
-
-    if (constraints.audio || constraints.video) {
-        if (constraints.video) {
-            document.getElementById('media').style.display = 'block';
+    //发起连接（Negotiation）
+    if (constraints.audio || constraints.video) {//如果选择了音频或视频，将会进行媒体协商
+        if (constraints.video) {//显示媒体区域（如果选择了视频）
+            document.getElementById('send_media').style.display = 'block';
+            document.getElementById('recv_media').style.display = 'block';
         }
+        //navigator.mediaDevices.getUserMedia 获取媒体流并添加到 PeerConnection
+        //getUserMedia从用户的媒体设备（如摄像头和麦克风）获取媒体流，此函数返回一个 Promise 对象，该对象在成功时解析为表示用户媒体流的 MediaStream 对象
         navigator.mediaDevices.getUserMedia(constraints).then(function(stream) {
-            stream.getTracks().forEach(function(track) {
+            //当getUserMedia成功获取媒体流时，将执行此回调函数
+            stream.getTracks().forEach(function(track) {//使用 getTracks 方法获取 MediaStream 中的所有轨道（音频轨道、视频轨道等）
                 pc.addTrack(track, stream);
             });
             return negotiate();
         }, function(err) {
             alert('Could not acquire media: ' + err);
         });
+        player=create_local_media()
+        if (player.audio & constraints.audio){
+            pc.addTrack(player.audio,player.audiostream)
+        }
+        if (player.video & constraints.video){
+            pc.addTrack(player.video,player.videostream);
+        }
+        negotiate();
     } else {
         negotiate();
     }
-
+    //显示停止按钮
     document.getElementById('stop').style.display = 'inline-block';
 }
 
