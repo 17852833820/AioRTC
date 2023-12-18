@@ -7,7 +7,9 @@ import sys
 
 import cv2
 import numpy
+import av
 from av import VideoFrame
+print(av.__version__)
 sys.path.append("/Users/ying/Library/CloudStorage/OneDrive-hust.edu.cn/Documents/毕业论文/新题-实验/Project/aiortc")
 # sys.path.append("/mnt/e/ying/OneDrive - hust.edu.cn/Documents/毕业论文/新题-实验/Project/aiortc")
 from src.aiortc import (RTCIceCandidate, RTCPeerConnection,
@@ -142,7 +144,7 @@ if __name__ == "__main__":
         logger.setLevel(logging.DEBUG)
         # 根据角色设置日志文件路径
         log_directory = f"log/{args.role}/"
-        log_file = f"{log_directory}test-rtt.log"
+        log_file = f"{log_directory}test-rtt3.log"
         logging.basicConfig(filename=log_file, level=logging.DEBUG,format='%(asctime)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'  )
         # 确保目录存在
@@ -158,7 +160,7 @@ if __name__ == "__main__":
 
     # create media source
     if args.play_from:
-        player = MediaPlayer(args.play_from)
+        player = MediaPlayer(args.play_from,loop=True)
         cv2.namedWindow("SendVideo", cv2.WINDOW_NORMAL)
     else:
         player = None

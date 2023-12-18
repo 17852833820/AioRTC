@@ -119,6 +119,7 @@ class StreamStatistics:
         self.max_seq: Optional[int] = None
         self.cycles = 0
         self.packets_received = 0
+        self.bytes_received=0
 
         # jitter
         self._clockrate = clockrate
@@ -135,7 +136,7 @@ class StreamStatistics:
             packet.sequence_number, self.max_seq
         )
         self.packets_received += 1
-
+        self.bytes_received+=len(packet.payload) + packet.padding_size
         if self.base_seq is None:
             self.base_seq = packet.sequence_number
 
@@ -296,9 +297,14 @@ class RTCRtpReceiver:
                 f"RTCRtpReceiver(%s) {msg}", self.__kind, *args
             )
         # 计算frame 传输时间
-        self.first_send_time=0
+        self.first_recv_time=0
         self.last_recv_time=0
-
+        # 统计接收速率
+        self.last_arrival_time=0
+        self.recv_rate=0#bps
+        self.last_arrival_bytes=0
+        self.last_count=0
+        self.recv_count=0
     @property
     def track(self) -> MediaStreamTrack:
         """
@@ -474,13 +480,12 @@ class RTCRtpReceiver:
         #     current_24NTP_time= ( clock.current_ntp_time() >> 14 ) & 0x00FFFFFF 
         #     self.last_recv_time=current_24NTP_time #current ms
         #     self.__log_debug('[FRAME_INFO]  transport dur: %d ms', self.last_recv_time-self.first_send_time)
-            
-        if packet.extensions.abs_send_time is not None : #第一个packet的发送时间
-            self.first_send_time=packet.extensions.abs_send_time
-            self.last_recv_time=arrival_24NTP_time
-            time=self.last_recv_time-self.first_send_time
-            time=time>>18
-            self.__log_debug('[FRAME_INFO]  transport dur: %d ms',time)
+        # 计算frame 延迟：最后一个包的接收时间-第一个包的接收时间+rtt/2    
+        if  packet.marker: #
+            self.last_recv_time=arrival_time_ms
+            self.__log_debug('[FRAME_INFO]  frame packet dur: %d ms',self.last_recv_time-self.first_recv_time)
+        if packet.extensions.marker_first:
+            self.first_recv_time=arrival_time_ms
            
         # keep track of sources
         self.__active_ssrc[packet.ssrc] = clock.current_datetime()
@@ -497,7 +502,16 @@ class RTCRtpReceiver:
         if packet.ssrc not in self.__remote_streams:
             self.__remote_streams[packet.ssrc] = StreamStatistics(codec.clockRate)
         self.__remote_streams[packet.ssrc].add(packet)
-
+        # 统计接收速率
+        if arrival_time_ms-self.last_arrival_time>1000: 
+                for ssrc, stream in self.__remote_streams.items():
+                    self.recv_rate=((stream.bytes_received-self.last_arrival_bytes)*8)/((arrival_time_ms-self.last_arrival_time)/1000)
+                    self.recv_count=stream.packets_received-self.last_count
+                    self.__log_debug('[Recv_INFO] ssrc: %d, timestamp: %d,recv rate: %f bps, count_received: %d', ssrc,arrival_time_ms,self.recv_rate, self.recv_count)
+                    self.last_arrival_bytes=stream.bytes_received
+                    self.last_count=stream.packets_received
+                    self.last_arrival_time=arrival_time_ms
+                    
         # unwrap retransmission packet 
         if is_rtx(codec):
             original_ssrc = self.__rtx_ssrc.get(packet.ssrc)

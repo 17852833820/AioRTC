@@ -207,9 +207,9 @@ def unpack_remb_fci(data: bytes) -> Tuple[int, List[int]]:
     if len(data) < 8 or data[0:4] != b"REMB":
         raise ValueError("Invalid REMB prefix")
 
-    exponent = (data[5] & 0xFC) >> 2
-    mantissa = ((data[5] & 0x03) << 16) | (data[6] << 8) | data[7]
-    bitrate = mantissa << exponent
+    exponent = (data[5] & 0xFC) >> 2 #exponent 从 data[5] 的第 2 到第 7 位得出
+    mantissa = ((data[5] & 0x03) << 16) | (data[6] << 8) | data[7] #mantissa 使用 data[5] 的第 0 到第 1 位，data[6] 和 data[7] 构建。它通过将 data[5] 的位左移 16 位，将 data[6] 的位左移 8 位，以及直接使用 data[7] 的位，然后使用 | 运算符组合这些位。
+    bitrate = mantissa << exponent #将 mantissa 左移 exponent 位得到
 
     pos = 8
     ssrcs = []

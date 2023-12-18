@@ -4,6 +4,7 @@ import math
 from itertools import tee
 from struct import pack, unpack_from
 from typing import Iterator, List, Optional, Sequence, Tuple, Type, TypeVar
+from enum import Enum
 
 import av
 from av.frame import Frame
@@ -32,6 +33,86 @@ STAP_A_HEADER_SIZE = NAL_HEADER_SIZE + LENGTH_FIELD_SIZE
 
 DESCRIPTOR_T = TypeVar("DESCRIPTOR_T", bound="H264PayloadDescriptor")
 T = TypeVar("T")
+
+
+ 
+
+class NalUnitType(Enum):
+    NAL_UNKNOWN = 0
+    NAL_SLICE = 1
+    NAL_SLICE_DPA = 2
+    NAL_SLICE_DPB = 3
+    NAL_SLICE_DPC = 4
+    NAL_SLICE_IDR = 5
+    NAL_SEI = 6
+    NAL_SPS = 7
+    NAL_PPS = 8
+
+
+class Frametype(Enum):
+    FRAME_I = 0
+    FRAME_P = 1
+    FRAME_B = 2
+    SEI = 3  # 新增 SEI 常量
+    SPS = 4  # 新增 SPS 常量
+    PPS = 5  # 新增 PPS 常量 
+class Bitstream:
+    def __init__(self, p_data):
+        self.p_start = p_data
+        self.p = 0
+        self.p_end = self.p + len(p_data)
+        self.i_left = 8
+    def bs_read(self, i_count):
+        i_mask = [0x00, 0x01, 0x03, 0x07, 0x0f, 0x1f, 0x3f, 0x7f,
+                 0xff, 0x1ff, 0x3ff, 0x7ff, 0xfff, 0x1fff, 0x3fff,
+                 0x7fff, 0xffff, 0x1ffff, 0x3ffff, 0x7ffff, 0xfffff,
+                 0x1fffff, 0x3fffff, 0x7fffff, 0xffffff, 0x1ffffff,
+                 0x3ffffff, 0x7ffffff, 0xfffffff, 0x1fffffff, 0x3fffffff,
+                 0x7fffffff, 0xffffffff]
+
+        i_result = 0
+
+        while i_count > 0:
+            if self.p >= self.p_end:
+                break
+
+            i_shr = self.i_left - i_count
+
+            if i_shr >= 0:
+                i_result |= (self.p >> i_shr) & i_mask[i_count]
+                self.i_left -= i_count
+
+                if self.i_left == 0:
+                    self.p += 1
+                    self.i_left = 8
+
+                return i_result
+            else:
+                i_result |= (self.p & i_mask[self.i_left]) << -i_shr
+                i_count -= self.i_left
+                self.p += 1
+                self.i_left = 8
+
+        return i_result
+
+    def bs_read1(self):
+        if self.p < self.p_end:
+            i_result = (self.p >> (self.i_left - 1)) & 0x01
+            self.i_left -= 1
+
+            if self.i_left == 0:
+                self.p += 1
+                self.i_left = 8
+
+            return i_result
+        return 0
+    def bs_read_ue(s):
+        i = 0
+
+        while s.bs_read1() == 0 and s.p < s.p_end and i < 32:
+            i += 1
+
+        return (1 << i) - 1 + s.bs_read(i)
 
 
 def pairwise(iterable: Sequence[T]) -> Iterator[Tuple[T, T]]:
@@ -125,6 +206,7 @@ def create_encoder_context(
     codec_name: str, width: int, height: int, bitrate: int
 ) -> Tuple[av.CodecContext, bool]:
     codec = av.CodecContext.create(codec_name, "w")
+   
     codec.width = width
     codec.height = height
     codec.bit_rate = bitrate
@@ -132,10 +214,16 @@ def create_encoder_context(
     codec.framerate = fractions.Fraction(MAX_FRAME_RATE, 1)
     codec.time_base = fractions.Fraction(1, MAX_FRAME_RATE)
     codec.options = {
-        "profile": "baseline",
+        "profile": "main",# baseline, main, high, high10, high422, high444.
         "level": "31",
         "tune": "zerolatency",  # does nothing using h264_omx
     }
+    codec.gop_size = MAX_FRAME_RATE  # GOP (Group of Pictures) 大小
+    codec.qmin = 30  # 最小量化器
+    codec.qmax = 51  # 最大量化器
+    # codec.has_b_frames =True
+    # codec.max_b_frames = 1  # 最大 B 帧数
+    # codec.global_quality = 10  # 全局质量
     codec.open()
     return codec, codec_name == "h264_omx"
 
@@ -229,32 +317,33 @@ class H264Encoder(Encoder):
             # Find the start of the NAL unit.
             #
             # NAL Units start with the 3-byte start code 0x000001 or
-            # the 4-byte start code 0x00000001.
+            # the 4-byte start code 0x00000001.  # 查找 NAL 单元的开始码
             i = buf.find(b"\x00\x00\x01", i)
-            if i == -1:
+            if i == -1: # 如果没有找到，结束函数
                 return
 
             # Jump past the start code
             i += 3
             nal_start = i
 
-            # Find the end of the NAL unit (end of buffer OR next start code)
+            # Find the end of the NAL unit (end of buffer OR next start code) # 查找 NAL 单元的结束码（下一个开始码或数据末尾）
             i = buf.find(b"\x00\x00\x01", i)
-            if i == -1:
+            if i == -1:# 如果没有找到下一个开始码，返回当前开始码到数据末尾的部分
                 yield buf[nal_start : len(buf)]
                 return
             elif buf[i - 1] == 0:
                 # 4-byte start code case, jump back one byte
-                yield buf[nal_start : i - 1]
+                yield buf[nal_start : i - 1]# 如果是 4 字节的开始码，回退一字节
             else:
-                yield buf[nal_start:i]
+                yield buf[nal_start:i] # 返回当前开始码到下一个开始码之前的部分
 
     @classmethod #用于将给定的数据包（每个经过H264编码后的NAL单元）进行分片
-    def _packetize(cls, packages: Iterator[bytes]) -> List[bytes]:
+    def _packetize(cls, packages: Iterator[bytes]) -> Tuple[List[bytes],bytes]:
         packetized_packages = []
 
         packages_iterator = iter(packages)
         package = next(packages_iterator, None)#获取生成器中下一个编码后的NAL单元数据
+        package_nal=package
         while package is not None:
             if len(package) > PACKET_MAX:#如果超过了一个Packet，用_packetize_fu_a将NAL单元分成多个FU-A
                 packetized_packages.extend(cls._packetize_fu_a(package))
@@ -263,7 +352,7 @@ class H264Encoder(Encoder):
                 packetized, package = cls._packetize_stap_a(package, packages_iterator)
                 packetized_packages.append(packetized)
 
-        return packetized_packages #Packet列表
+        return packetized_packages,package_nal #Packet列表
     """生成器"""
     def _encode_frame(
         self, frame: av.VideoFrame, force_keyframe: bool
@@ -318,6 +407,32 @@ class H264Encoder(Encoder):
 
         if data_to_send: #将累积的编码数据分割为较小的数据包，并通过_split_bitstream方法发送
             yield from self._split_bitstream(data_to_send)#将 data_to_send 中经过 _split_bitstream 处理后的每个 NAL 单元的内容逐一返回给调用方
+    def get_frame_type(self,package_nal):
+        # 获取NAL单元的类型
+        cNalu =hex(package_nal[0])
+        nal_unit_type = int(hex((package_nal[0]) & 0x1F),16)
+        s=Bitstream(package_nal)
+        if nal_unit_type == NalUnitType.NAL_SLICE.value or nal_unit_type == NalUnitType.NAL_SLICE_IDR.value:
+            s.bs_read_ue()  # i_first_mb
+            frame_type = s.bs_read_ue()  # picture type
+            if frame_type in [0, 5]:
+                frametype = Frametype.FRAME_P
+            elif frame_type in [1, 6]:
+                frametype = Frametype.FRAME_B
+            elif frame_type in [3, 8]:
+                frametype = Frametype.FRAME_P
+            elif frame_type in [2, 7]:
+                frametype = Frametype.FRAME_I
+            elif frame_type in [4, 9]:
+                frametype = Frametype.FRAME_I
+                I_Frame_Num += 1
+        elif nal_unit_type == NalUnitType.NAL_SEI.value:
+            frametype = Frametype.SEI
+        elif nal_unit_type == NalUnitType.NAL_SPS.value:
+            frametype = Frametype.SPS
+        elif nal_unit_type == NalUnitType.NAL_PPS.value:
+            frametype = Frametype.PPS
+        logger.info("Encodec | Nal_unit_type: {0} Frame type ==============={1} ".format(nal_unit_type,frametype.name))
 
     def encode(
         self, frame: Frame, force_keyframe: bool = False
@@ -325,7 +440,10 @@ class H264Encoder(Encoder):
         assert isinstance(frame, av.VideoFrame)
         packages = self._encode_frame(frame, force_keyframe) #返回生成器
         timestamp = convert_timebase(frame.pts, frame.time_base, VIDEO_TIME_BASE)
-        return self._packetize(packages), timestamp #返回编码打包后的packet列表和时间戳
+        packages_packetize,package_nal=self._packetize(packages)
+        self.get_frame_type(package_nal)
+        
+        return packages_packetize, timestamp #返回编码打包后的packet列表和时间戳
 
     def pack(self, packet: Packet) -> Tuple[List[bytes], int]:
         assert isinstance(packet, av.Packet)

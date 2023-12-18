@@ -89,7 +89,11 @@ class RTCRtpSender:
         self.__octet_count = 0
         self.__packet_count = 0
         self.__rtt = None
-
+        self.send_rate=0 #bps
+        self.last_octet=0
+        self.timestamp=0
+        self.last_timestamp=0
+        self.last_count=0
         # logging
         self.__log_debug: Callable[..., None] = lambda *args: None
         if logger.isEnabledFor(logging.DEBUG):
@@ -149,6 +153,7 @@ class RTCRtpSender:
                 trackId=str(id(self.track)),
             )
         )
+        # self.__log_debug('[Sender_INFO] timestamp: %d, packetsSent: %d ,bytesSent: %d',timestamp_origin, sequence_number)
         self.__stats.update(self.transport._get_stats())
 
         return self.__stats
@@ -215,6 +220,7 @@ class RTCRtpSender:
                         self.__rtt = rtt
                     else:
                         self.__rtt = RTT_ALPHA * self.__rtt + (1 - RTT_ALPHA) * rtt
+                # self.__log_debug('[FRAME_INFO] loss rate: %f %', report.packets_lost)
 
                 self.__stats.add(
                     RTCRemoteInboundRtpStreamStats(
@@ -355,10 +361,18 @@ class RTCRtpSender:
                     await self.transport._send_rtp(packet_bytes)
                     # 更新统计信息
                     self.__ntp_timestamp = clock.current_ntp_time()
+                    self.timestamp=clock.current_ms()
                     self.__rtp_timestamp = packet.timestamp
                     self.__octet_count += len(payload)
                     self.__packet_count += 1
                     sequence_number = uint16_add(sequence_number, 1)
+                    # 计算发送速率
+                    if self.timestamp-self.last_timestamp>1000:
+                        self.send_rate=((self.__octet_count-self.last_octet)*8)/((self.timestamp-self.last_timestamp)/1000)
+                        self.__log_debug('[Send_INFO] timestamp: %d, send_rate: %f bps, packet_count: %d', self.timestamp,self.send_rate, self.__packet_count-self.last_count)
+                        self.last_octet=self.__octet_count
+                        self.last_timestamp=self.timestamp
+                        self.last_count=self.__packet_count
                 frame_number = uint16_add(frame_number, 1)
         except (asyncio.CancelledError, ConnectionError, MediaStreamError):
             pass
