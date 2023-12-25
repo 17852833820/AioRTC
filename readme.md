@@ -447,3 +447,18 @@ https://blog.csdn.net/qq_34771252/article/details/90207617
 baseline 编码：
 - 只有IDR/I/P帧，没有B帧
 
+## 获取Frame Type
+参考：https://blog.csdn.net/u012587637/article/details/117698327?spm=1001.2101.3001.6650.5&utm_medium=distribute.pc_relevant.none-task-blog-2%7Edefault%7EBlogCommendFromBaidu%7ERate-5-117698327-blog-45583249.235%5Ev39%5Epc_relevant_anti_vip&depth_1-utm_source=distribute.pc_relevant.none-task-blog-2%7Edefault%7EBlogCommendFromBaidu%7ERate-5-117698327-blog-45583249.235%5Ev39%5Epc_relevant_anti_vip&utm_relevant_index=10
+
+# 方案实现
+## 1. 方案设计
+总体思路：
+![Alt text](KkvMsb7jex.jpg)
+问题：1. 多个编解码器是重建销毁还是复用
+     2. 什么时候将P强制编码成I，即什么时候需要把I帧编码出备用P帧
+     3. I帧传输完成后什么时候切换成备用流，需要有一个反馈信号，需扩展RTCP协议
+1. 扩展RTCP协议
+2. 设置编码器默认GOP长度较大
+3. 两个解码器复用编码
+4. 解码时需设置解码优先级：对每一张图像，先收到哪个stream的先解码哪个版本的帧，若先解码P帧用于渲染，待I帧到达解码后可用作参考帧供后续解码参考
+5. 

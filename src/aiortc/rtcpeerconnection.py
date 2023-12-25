@@ -694,7 +694,7 @@ class RTCPeerConnection(AsyncIOEventEmitter):
 
     def getSenders(self) -> List[RTCRtpSender]:
         """
-        Returns the list of :class:`RTCRtpSender` objects that are currently
+        Returns the list of :class:`RTCRtpSender` objects that  currently
         attached to the connection.
         """
         return list(map(lambda x: x.sender, self.__transceivers))

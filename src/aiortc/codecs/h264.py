@@ -202,9 +202,14 @@ class H264Decoder(Decoder):
         return frames
 
 """初始化编码器"""
+
+       
 def create_encoder_context(
     codec_name: str, width: int, height: int, bitrate: int
 ) -> Tuple[av.CodecContext, bool]:
+    
+    # av.VideoCodecContext.max_b_frames = property(lambda self: self.ptr.max_b_frames)
+    
     codec = av.CodecContext.create(codec_name, "w")
    
     codec.width = width
@@ -218,9 +223,9 @@ def create_encoder_context(
         "level": "31",
         "tune": "zerolatency",  # does nothing using h264_omx
     }
-    codec.gop_size = MAX_FRAME_RATE  # GOP (Group of Pictures) 大小
-    codec.qmin = 30  # 最小量化器
-    codec.qmax = 51  # 最大量化器
+    codec.gop_size = 99999  # GOP (Group of Pictures) 大小
+    # codec.qmin = 30  # 最小量化器
+    # codec.qmax = 51  # 最大量化器
     # codec.has_b_frames =True
     # codec.max_b_frames = 1  # 最大 B 帧数
     # codec.global_quality = 10  # 全局质量
@@ -407,7 +412,7 @@ class H264Encoder(Encoder):
 
         if data_to_send: #将累积的编码数据分割为较小的数据包，并通过_split_bitstream方法发送
             yield from self._split_bitstream(data_to_send)#将 data_to_send 中经过 _split_bitstream 处理后的每个 NAL 单元的内容逐一返回给调用方
-    def get_frame_type(self,package_nal):
+    def get_frame_type(self,package_nal)->Frametype:
         # 获取NAL单元的类型
         cNalu =hex(package_nal[0])
         nal_unit_type = int(hex((package_nal[0]) & 0x1F),16)
@@ -433,7 +438,7 @@ class H264Encoder(Encoder):
         elif nal_unit_type == NalUnitType.NAL_PPS.value:
             frametype = Frametype.PPS
         logger.info("Encodec | Nal_unit_type: {0} Frame type ==============={1} ".format(nal_unit_type,frametype.name))
-
+        return frametype
     def encode(
         self, frame: Frame, force_keyframe: bool = False
     ) -> Tuple[List[bytes], int]:
@@ -441,9 +446,9 @@ class H264Encoder(Encoder):
         packages = self._encode_frame(frame, force_keyframe) #返回生成器
         timestamp = convert_timebase(frame.pts, frame.time_base, VIDEO_TIME_BASE)
         packages_packetize,package_nal=self._packetize(packages)
-        self.get_frame_type(package_nal)
+        frametype=self.get_frame_type(package_nal)
         
-        return packages_packetize, timestamp #返回编码打包后的packet列表和时间戳
+        return packages_packetize, timestamp ,frametype#返回编码打包后的packet列表和时间戳
 
     def pack(self, packet: Packet) -> Tuple[List[bytes], int]:
         assert isinstance(packet, av.Packet)

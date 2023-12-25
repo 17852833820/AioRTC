@@ -144,7 +144,7 @@ if __name__ == "__main__":
         logger.setLevel(logging.DEBUG)
         # 根据角色设置日志文件路径
         log_directory = f"log/{args.role}/"
-        log_file = f"{log_directory}test-rtt3.log"
+        log_file = f"{log_directory}test-rtt6.log"
         logging.basicConfig(filename=log_file, level=logging.DEBUG,format='%(asctime)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'  )
         # 确保目录存在

@@ -7,6 +7,7 @@ import threading
 import time
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Set
+import collections
 
 from av.frame import Frame
 
@@ -52,15 +53,23 @@ def decoder_worker(loop, input_q, output_q):
             asyncio.run_coroutine_threadsafe(output_q.put(None), loop)
             break
         codec, encoded_frame = task
-
         if codec.name != codec_name: #检查编解码器是否匹配
-            decoder = get_decoder(codec)
+            decoder = get_decoder(codec)# 实际解码器
             codec_name = codec.name
         #使用解码器对编码帧进行解码，得到解码后的帧
         for frame in decoder.decode(encoded_frame):
             # pass the decoded frame to the track
+            # 检查当前frame是否已经被解码过：若队列中已有frame，丢弃
+            # in_output_queue=False
+            # if len(output_q._queue)!=0:
+            #     for item in output_q._queue:
+            #         if item.index == frame.index:
+            #             in_output_queue= True
+            #             __log_debug('[DECODE] Drop Render Frame...Stream id: %s, Number: %d, Type: %d', encoded_frame.stream_id, frame.index, frame.pict_type)
+            # if not in_output_queue:
             asyncio.run_coroutine_threadsafe(output_q.put(frame), loop) #将解码后的帧（frame）放入输出队列
-        
+            __log_debug('[DECODE] Add Render Frame...Stream id: %s, Number: %d, Type: %d', encoded_frame.stream_id, frame.index, frame.pict_type)
+
         now = clock.current_ms()
         dec_dur = now - encoded_frame.times_dur['time_in_dec_q']
         __log_debug('[FRAME_INFO] T: %d, dec_dur: %d, Bytes: %d', encoded_frame.timestamp, dec_dur, len(encoded_frame.data))
@@ -180,15 +189,46 @@ class StreamStatistics:
     @property
     def packets_lost(self) -> int:
         return clamp_packets_lost(self.packets_expected - self.packets_received)
+class QueueRepeat(Exception):
+    """Raised when the Queue.put_nowait() method is called on a full Queue."""
+    pass
 
+class UniqueQueue(asyncio.Queue):
+    def __init__(self, maxsize=0):
+        self._maxsize = maxsize
+        
+        # Futures.
+        self._getters = collections.deque()
+        # Futures.
+        self._putters = collections.deque()
+        self._unfinished_tasks = 0
+        self._finished = asyncio.locks.Event()
+        self._finished.set()
+        self._init(maxsize)
+        self.index_list=[]
+    def put_nowait(self, item):
+        """Put an item into the queue without blocking.
 
+        If no free slot is immediately available, raise QueueFull.
+        """
+        
+        if self.full():
+            raise asyncio.QueueFull
+        # check index 
+        if item.index not in self.index_list: # fix join bug
+            self._put(item)
+            self.index_list.append(item.index)
+            self._unfinished_tasks += 1
+            self._finished.clear()
+            self._wakeup_next(self._getters)
+        
 class RemoteStreamTrack(MediaStreamTrack):
     def __init__(self, kind: str, id: Optional[str] = None) -> None:
         super().__init__()
         self.kind = kind
         if id is not None:
             self._id = id
-        self._queue: asyncio.Queue = asyncio.Queue()
+        self._queue: UniqueQueue = UniqueQueue()
 
     async def recv(self) -> Frame:
         """
@@ -264,7 +304,9 @@ class RTCRtpReceiver:
         self.__active_ssrc: Dict[int, datetime.datetime] = {}
         self.__codecs: Dict[int, RTCRtpCodecParameters] = {}
         self.__decoder_queue: queue.Queue = queue.Queue()
+        self.__decoder_queue2: queue.Queue = queue.Queue()
         self.__decoder_thread: Optional[threading.Thread] = None
+        self.__decoder_thread2: Optional[threading.Thread] = None
         self.__kind = kind
         if kind == "audio":
             self.__jitter_buffer = JitterBuffer(capacity=16, prefetch=4)
@@ -388,14 +430,25 @@ class RTCRtpReceiver:
             # start decoder thread 启动一个用于解码传入媒体数据包的单独线程，该线程运行 decoder_worker 函数
             self.__decoder_thread = threading.Thread(
                 target=decoder_worker,
-                name=self.__kind + "-decoder",
+                name=self.__kind + "-decoder1",
                 args=(
                     asyncio.get_event_loop(),
                     self.__decoder_queue,#待解码的队列
                     self._track._queue,#解码后输出的队列
                 ),
             )
+            #多流解码
             self.__decoder_thread.start()
+            self.__decoder_thread2 = threading.Thread(
+                target=decoder_worker,
+                name=self.__kind + "-decoder2",
+                args=(
+                    asyncio.get_event_loop(),
+                    self.__decoder_queue2,#待解码的队列
+                    self._track._queue,#解码后输出的队列
+                ),
+            )
+            self.__decoder_thread2.start()
 
             self.__transport._register_rtp_receiver(self, parameters)
             self.__rtcp_task = asyncio.ensure_future(self._run_rtcp())
@@ -483,7 +536,7 @@ class RTCRtpReceiver:
         # 计算frame 延迟：最后一个包的接收时间-第一个包的接收时间+rtt/2    
         if  packet.marker: #
             self.last_recv_time=arrival_time_ms
-            self.__log_debug('[FRAME_INFO]  frame packet dur: %d ms',self.last_recv_time-self.first_recv_time)
+            self.__log_debug('[FRAME_INFO] T: %d ,  frame packet dur: %d ms',packet.timestamp,self.last_recv_time-self.first_recv_time)
         if packet.extensions.marker_first:
             self.first_recv_time=arrival_time_ms
            
@@ -555,9 +608,13 @@ class RTCRtpReceiver:
         if encoded_frame is not None and self.__decoder_thread:
             encoded_frame.timestamp = self.__timestamp_mapper.map(
                 encoded_frame.timestamp
-            )
+            )#获得了frame的pts
             encoded_frame.times_dur['time_in_dec_q'] = clock.current_ms()
-            self.__decoder_queue.put((codec, encoded_frame))
+            if encoded_frame.stream_id == "2":
+                self.__decoder_queue2.put((codec, encoded_frame))
+            else:
+                self.__decoder_queue.put((codec, encoded_frame))
+
 
     async def _run_rtcp(self) -> None:
         self.__log_debug("- RTCP started")
@@ -641,3 +698,7 @@ class RTCRtpReceiver:
             self.__decoder_queue.put(None)
             self.__decoder_thread.join()
             self.__decoder_thread = None
+        if self.__decoder_thread2:
+            self.__decoder_queue2.put(None)
+            self.__decoder_thread2.join()
+            self.__decoder_thread2 = None
