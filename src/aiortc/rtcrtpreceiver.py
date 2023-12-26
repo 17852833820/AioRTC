@@ -58,15 +58,7 @@ def decoder_worker(loop, input_q, output_q):
             codec_name = codec.name
         #使用解码器对编码帧进行解码，得到解码后的帧
         for frame in decoder.decode(encoded_frame):
-            # pass the decoded frame to the track
-            # 检查当前frame是否已经被解码过：若队列中已有frame，丢弃
-            # in_output_queue=False
-            # if len(output_q._queue)!=0:
-            #     for item in output_q._queue:
-            #         if item.index == frame.index:
-            #             in_output_queue= True
-            #             __log_debug('[DECODE] Drop Render Frame...Stream id: %s, Number: %d, Type: %d', encoded_frame.stream_id, frame.index, frame.pict_type)
-            # if not in_output_queue:
+            
             asyncio.run_coroutine_threadsafe(output_q.put(frame), loop) #将解码后的帧（frame）放入输出队列
             __log_debug('[DECODE] Add Render Frame...Stream id: %s, Number: %d, Type: %d', encoded_frame.stream_id, frame.index, frame.pict_type)
 

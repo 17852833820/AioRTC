@@ -26,6 +26,7 @@ RTCP_SR = 200
 RTCP_RR = 201
 RTCP_SDES = 202
 RTCP_BYE = 203
+RTCP_APP = 204
 RTCP_RTPFB = 205
 RTCP_PSFB = 206
 
@@ -34,6 +35,7 @@ RTCP_RTPFB_NACK = 1
 RTCP_PSFB_PLI = 1
 RTCP_PSFB_SLI = 2
 RTCP_PSFB_RPSI = 3
+RTCP_PSFB_IF = 12
 RTCP_PSFB_APP = 15
 
 
@@ -176,7 +178,20 @@ def unpack_packets_lost(d: bytes) -> int:
 def pack_rtcp_packet(packet_type: int, count: int, payload: bytes) -> bytes:
     assert len(payload) % 4 == 0
     return pack("!BBH", (2 << 6) | count, packet_type, len(payload) // 4) + payload
+#扩展反馈包
+def pack_if_fci(isFinish: int, ssrcs: List[int]) -> bytes:
+    """
+    Pack the FCI for a Receiver Estimated Maximum Bitrate report.
 
+    https://tools.ietf.org/html/draft-alvestrand-rmcat-remb-03
+    """
+    data = b"IF"
+    
+    isFinish &= 0x01
+    data +=pack("!B", isFinish)
+    
+    
+    return data
 
 def pack_remb_fci(bitrate: int, ssrcs: List[int]) -> bytes:
     """
@@ -188,16 +203,26 @@ def pack_remb_fci(bitrate: int, ssrcs: List[int]) -> bytes:
     exponent = 0
     mantissa = bitrate
     while mantissa > 0x3FFFF:
-        mantissa >>= 1
-        exponent += 1
-    data += pack(
+        mantissa >>= 1#表示一个尾数
+        exponent += 1#表示一个指数
+    data += pack( 
         "!BBH", len(ssrcs), (exponent << 2) | (mantissa >> 16), (mantissa & 0xFFFF)
     )
     for ssrc in ssrcs:
         data += pack("!L", ssrc)
     return data
 
+def unpack_if_fci(data: bytes) -> int:
+    """
+    Unpack the FCI for a Receiver Estimated Maximum Bitrate report.
 
+    https://tools.ietf.org/html/draft-alvestrand-rmcat-remb-03
+    """
+    if len(data) < 3 or data[0:4] != b"IF":
+        raise ValueError("Invalid IF prefix")
+    isFinish=unpack("!B", data)[3] & 0x01
+
+    return (isFinish)
 def unpack_remb_fci(data: bytes) -> Tuple[int, List[int]]:
     """
     Unpack the FCI for a Receiver Estimated Maximum Bitrate report.
