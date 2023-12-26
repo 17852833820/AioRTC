@@ -29,6 +29,19 @@ logger = logging.getLogger(__name__)
 
 RTT_ALPHA = 0.85
 
+class MultiEncodeMode:
+    def __init__(self):
+        self.current_state = "S0"
+
+    def transition(self):
+        if self.current_state == "S0":
+            self.current_state = "S1"
+        elif self.current_state == "S1":
+            self.current_state = "S2"
+        elif self.current_state == "S2":
+            self.current_state = "S3"
+        elif self.current_state == "S3":
+            self.current_state = "S1"
 
 class RTCEncodedFrame:
     def __init__(self, payloads: List[bytes], timestamp: int, audio_level: int):
@@ -100,15 +113,15 @@ class RTCRtpSender:
                 f"RTCRtpSender(%s) {msg}", self.__kind, *args
             )
         # Multi Encoder
-        self.condition_IDR_event = asyncio.Event()
-        self.condition_Finish_event = asyncio.Event()
+        # self.condition_IDR_event = asyncio.Event()
+        # self.condition_Finish_event = asyncio.Event()
         self.lock = asyncio.Lock()
         self._data=None
         self.__encoder_two: Optional[Encoder] = None
-        self.IDR_receive_finished=False
+        # self.IDR_receive_finished=False
         self.use_multistream =True
-    
-
+        self.encode_mode=MultiEncodeMode()
+        self.encode_role_forwart=False #前向：stream1向stream2切换，否则stream2向stream1切换
     @property
     def kind(self):
         return self.__kind
@@ -273,8 +286,9 @@ class RTCRtpSender:
                 pass
 
     async def _next_encoded_frame(self, codec: RTCRtpCodecParameters):
-        if not self.condition_Finish_event.is_set():
-            # get [Frame|Packet]
+            # 设置关键帧
+            if not self.encode_role_forwart and self.encode_mode.current_state=="S1":
+                self._send_keyframe()
             #获取下一个媒体帧或数据包
             audio_level = None
             #如果编码器未初始化，获取一个适用于给定编解码器参数的编码器
@@ -290,24 +304,17 @@ class RTCRtpSender:
                 force_keyframe = self.__force_keyframe
                 self.__force_keyframe = False
                 #调用编码器的encode方法执行编码，返回编码的payloads（packet列表）和时间戳
-                payloads, timestamp ,frametype= await self.__loop.run_in_executor(
+                payloads, timestamp ,frametype,framesize= await self.__loop.run_in_executor(
                     None, self.__encoder.encode, self._data, force_keyframe
                 )
                 
             else:#调用编码器的pack方法执行编码
                 payloads, timestamp = self.__encoder.pack(self._data)
             te = clock.current_ms()#获取编码结束时间戳
-            # 触发多流编码
-            async with self.lock:
-                    if self._data.index==5 and not self.condition_IDR_event.is_set():
-                        # Trigger the event to switch to the second encoder
-                        self.condition_IDR_event.set()
-            if self._data.index==20:
-                self.condition_IDR_event.clear()
-            #返回一个包含编码payloads，时间戳和音频级别的RTCEncodedFrame对象
-            return RTCEncodedFrame(payloads, timestamp, audio_level), te-ts,frametype
-        else:
-            return None,None,None
+           
+            return RTCEncodedFrame(payloads, timestamp, audio_level), te-ts,frametype,framesize
+        # else:
+        #     return None,None,None
     """重传丢失的RTP包"""
     async def _retransmit(self, sequence_number: int) -> None:
         """
@@ -334,15 +341,16 @@ class RTCRtpSender:
         """
         self.__force_keyframe = True
     async def _next_encoded_frame_two(self, codec: RTCRtpCodecParameters)->None:
-        # Wait for the condition to be triggered
-        if  self.condition_IDR_event.is_set():
-            # self._send_keyframe()
+            # 设置关键帧
+            if  self.encode_role_forwart and self.encode_mode.current_state=="S1":
+                self._send_keyframe()
             audio_level = None
             #如果编码器未初始化，获取一个适用于给定编解码器参数的编码器
             if self.__encoder_two is None:
                 self.__encoder_two = get_encoder(codec)
             
             ts = clock.current_ms()#获取当前时间戳
+            
             if isinstance(self._data, Frame):#如果获取的数据是帧类型
                 # encode frame 编码帧
                 if isinstance(self._data, AudioFrame):
@@ -351,24 +359,16 @@ class RTCRtpSender:
                 force_keyframe = self.__force_keyframe
                 self.__force_keyframe = False
                 #调用编码器的encode方法执行编码，返回编码的payloads（packet列表）和时间戳
-                payloads, timestamp ,frametype= await self.__loop.run_in_executor(
+                payloads, timestamp ,frametype,framesize= await self.__loop.run_in_executor(
                     None, self.__encoder_two.encode, self._data, force_keyframe
                 )
                 
             else:#调用编码器的pack方法执行编码
                 payloads, timestamp = self.__encoder_two.pack(self._data)
             te = clock.current_ms()#获取编码结束时间戳
-            # 触发多流编码
-            async with self.lock:
-                    if self._data.index == 15  and  self.condition_Finish_event.is_set():
-                        # Trigger the event to switch to the second encoder
-                        self.condition_Finish_event.clear()
-            if self._data.index==10:
-                self.condition_Finish_event.set()
-            #返回一个包含编码payloads，时间戳和音频级别的RTCEncodedFrame对象
-            return RTCEncodedFrame(payloads, timestamp, audio_level), te-ts,frametype
-        else:
-            return None,None,None
+            
+            return RTCEncodedFrame(payloads, timestamp, audio_level), te-ts,frametype,framesize
+        
     async def _run_rtp(self, codec: RTCRtpCodecParameters) -> None:
         self.__log_debug("- RTP started")
         self.__rtp_started.set()
@@ -461,49 +461,20 @@ class RTCRtpSender:
                 
                 # 编码下一帧
                 self._data = await self.__track.recv()
-                enc_frame, enc_dur ,frame_type= await self._next_encoded_frame(codec) #返回了一帧图像编码后产生的数据：编码打包后的packet列表和时间戳，enc_dur为编码一张图像花费的时间
-                enc_frame_two, enc_dur_two ,frame_type_two= await self._next_encoded_frame_two(codec) #返回了一帧图像编码后产生的数据：编码打包后的packet列表和时间戳，enc_dur为编码一张图像花费的时间
-                # 对于强制I帧编码的stream，传输I帧，跳过I帧后的5个P帧后再开启传输
-                if (enc_frame_two and (frame_type_two.value==0 or frame_type_two.value == 4)) or (enc_frame_two and self.condition_Finish_event.is_set()):
-                    timestamp = uint32_add(timestamp_origin, enc_frame_two.timestamp)
-                    self.__log_debug('[FRAME_INFO] Stream id 2, Number: %d, PTS: %d, enc_dur: %d Type: %d', frame_number,timestamp, enc_dur_two,frame_type_two.value)
-                    for i, payload in enumerate(enc_frame_two.payloads):
-                        packet = RtpPacket(
-                            payload_type=codec.payloadType,
-                            sequence_number=sequence_number,
-                            timestamp=timestamp,
-                        )
-                        packet.ssrc = self._ssrc
-                        packet.payload = payload
-                        packet.marker = (i == len(enc_frame_two.payloads) - 1) and 1 or 0 #用于指示当前数据包是否是一个帧（frame）的最后一个数据包
-                        # set header extensions 添加头部扩展
-                        packet.extensions.abs_send_time = ( #RTP包的发送时间：获取当前的NTP时间戳，将64位的 NTP timestamps转圜为24位
-                            clock.current_ntp_time() >> 14
-                        ) & 0x00FFFFFF 
-                        packet.extensions.mid = self.__mid #用于唯一标识发送的媒体流
-                        packet.extensions.marker_first= "2" #stream id
-                        if enc_frame_two.audio_level is not None:
-                            packet.extensions.audio_level = (False, -enc_frame_two.audio_level)
-                        # 记录第一个数据包的发送时间
-                        
-                        # send packet 调用_send_rtp发送RTP数据包
-                        self.__log_debug("> %s", packet)
-                        self.__rtp_history[
-                            packet.sequence_number % RTP_HISTORY_SIZE
-                        ] = packet
-                        packet_bytes = packet.serialize(self.__rtp_header_extensions_map) #一个RTP packet
-                        await self.transport._send_rtp(packet_bytes)
-                        # 更新统计信息
-                        self.__ntp_timestamp = clock.current_ntp_time()
-                        self.timestamp=clock.current_ms()
-                        self.__rtp_timestamp = packet.timestamp
-                        self.__octet_count += len(payload)
-                        self.__packet_count += 1
-                        sequence_number = uint16_add(sequence_number, 1)
+                if self._data.index%10==0 and self._data.index>=10:
+                        self.encode_mode.transition()#转换到S1:出现关键帧
+                        self.encode_role_forwart=not self.encode_role_forwart
+                if self._data.index%10==1 and self._data.index>=10:
+                    self.encode_mode.transition()#转换到S2：一张关键帧编码完成开始传输
+                if  self._data.index%10==5 and self._data.index>=10:
+                    self.encode_mode.transition()#转换到S3：关键帧传输完成
+               
                 # 对于正常P帧编码的stream，正常传输直到编码器停止返回None
-                if not self.condition_Finish_event.is_set() and enc_frame:
+                # if not self.condition_Finish_event.is_set() and enc_frame:
+                if  (self.encode_role_forwart and self.encode_mode.current_state!="S3") or (not self.encode_role_forwart and self.encode_mode.current_state!="S2"):
+                    enc_frame, enc_dur ,frame_type,frame_size= await self._next_encoded_frame(codec) #返回了一帧图像编码后产生的数据：编码打包后的packet列表和时间戳，enc_dur为编码一张图像花费的时间
                     timestamp = uint32_add(timestamp_origin, enc_frame.timestamp)
-                    self.__log_debug('[FRAME_INFO] Stream id : 1, Number: %d, PTS: %d, enc_dur: %d Type: %d', frame_number,timestamp, enc_dur,frame_type.value)
+                    self.__log_debug('[FRAME_INFO] Stream id : 1, Number: %d, PTS: %d, enc_dur: %d Type: %s, size: %d', frame_number,timestamp, enc_dur,frame_type.name,frame_size)
                     # 遍历每个packet并为其创建一个RTP数据包
                     for i, payload in enumerate(enc_frame.payloads):
                         packet = RtpPacket(
@@ -522,6 +493,45 @@ class RTCRtpSender:
                         packet.extensions.marker_first= "1" #stream id
                         if enc_frame.audio_level is not None:
                             packet.extensions.audio_level = (False, -enc_frame.audio_level)
+                        # 记录第一个数据包的发送时间
+                        
+                        # send packet 调用_send_rtp发送RTP数据包
+                        self.__log_debug("> %s", packet)
+                        self.__rtp_history[
+                            packet.sequence_number % RTP_HISTORY_SIZE
+                        ] = packet
+                        packet_bytes = packet.serialize(self.__rtp_header_extensions_map) #一个RTP packet
+                        await self.transport._send_rtp(packet_bytes)
+                        # 更新统计信息
+                        self.__ntp_timestamp = clock.current_ntp_time()
+                        self.timestamp=clock.current_ms()
+                        self.__rtp_timestamp = packet.timestamp
+                        self.__octet_count += len(payload)
+                        self.__packet_count += 1
+                        sequence_number = uint16_add(sequence_number, 1)
+                # 对于强制I帧编码的stream，传输I帧，跳过I帧后的5个P帧后再开启传输
+                # if (enc_frame_two and (frame_type_two.value==0 or frame_type_two.value == 4)) or (enc_frame_two and self.condition_Finish_event.is_set()):
+                if  (self.encode_role_forwart and self.encode_mode.current_state!="S2") or (not self.encode_role_forwart and self.encode_mode.current_state!="S3" and self.encode_mode.current_state!="S0"):
+                    enc_frame_two, enc_dur_two ,frame_type_two,frame_size_two= await self._next_encoded_frame_two(codec) #返回了一帧图像编码后产生的数据：编码打包后的packet列表和时间戳，enc_dur为编码一张图像花费的时间
+                    timestamp = uint32_add(timestamp_origin, enc_frame_two.timestamp)
+                    self.__log_debug('[FRAME_INFO] Stream id 2, Number: %d, PTS: %d, enc_dur: %d Type: %s , size: %d', frame_number,timestamp, enc_dur_two,frame_type_two.name,frame_size_two)
+                    for i, payload in enumerate(enc_frame_two.payloads):
+                        packet = RtpPacket(
+                            payload_type=codec.payloadType,
+                            sequence_number=sequence_number,
+                            timestamp=timestamp,
+                        )
+                        packet.ssrc = self._ssrc
+                        packet.payload = payload
+                        packet.marker = (i == len(enc_frame_two.payloads) - 1) and 1 or 0 #用于指示当前数据包是否是一个帧（frame）的最后一个数据包
+                        # set header extensions 添加头部扩展
+                        packet.extensions.abs_send_time = ( #RTP包的发送时间：获取当前的NTP时间戳，将64位的 NTP timestamps转圜为24位
+                            clock.current_ntp_time() >> 14
+                        ) & 0x00FFFFFF 
+                        packet.extensions.mid = self.__mid #用于唯一标识发送的媒体流
+                        packet.extensions.marker_first= "2" #stream id
+                        if enc_frame_two.audio_level is not None:
+                            packet.extensions.audio_level = (False, -enc_frame_two.audio_level)
                         # 记录第一个数据包的发送时间
                         
                         # send packet 调用_send_rtp发送RTP数据包

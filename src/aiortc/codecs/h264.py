@@ -16,7 +16,7 @@ from .base import Decoder, Encoder
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BITRATE = 10000000  # 1 Mbps
+DEFAULT_BITRATE = 3000000  # 1 Mbps
 MIN_BITRATE = 500000  # 500 kbps
 MAX_BITRATE = 3000000  # 3 Mbps
 
@@ -240,6 +240,7 @@ class H264Encoder(Encoder):
         self.codec: Optional[av.CodecContext] = None
         self.codec_buffering = False
         self.__target_bitrate = DEFAULT_BITRATE
+        self.frame_size=0
 
     @staticmethod
     def _packetize_fu_a(data: bytes) -> List[bytes]:
@@ -407,8 +408,9 @@ class H264Encoder(Encoder):
                     self.buffer_pts = package.pts
             else:
                 data_to_send += package_bytes
-        logger.info("Encodec | Frame  Type: {0} ,size: {1}".format(frame.pict_type,len(data_to_send)))
-        logger.info("Encodec | Target_bitrate: {0}".format(self.target_bitrate))
+        self.frame_size=len(data_to_send)
+        # logger.info("Encodec | Frame  Type: {0} ,size: {1}".format(frame.pict_type,len(data_to_send)))
+        # logger.info("Encodec | Target_bitrate: {0}".format(self.target_bitrate))
 
         if data_to_send: #将累积的编码数据分割为较小的数据包，并通过_split_bitstream方法发送
             yield from self._split_bitstream(data_to_send)#将 data_to_send 中经过 _split_bitstream 处理后的每个 NAL 单元的内容逐一返回给调用方
@@ -437,7 +439,7 @@ class H264Encoder(Encoder):
             frametype = Frametype.SPS
         elif nal_unit_type == NalUnitType.NAL_PPS.value:
             frametype = Frametype.PPS
-        logger.info("Encodec | Nal_unit_type: {0} Frame type ==============={1} ".format(nal_unit_type,frametype.name))
+        # logger.info("Encodec | Nal_unit_type: {0} Frame type ==============={1} ".format(nal_unit_type,frametype.name))
         return frametype
     def encode(
         self, frame: Frame, force_keyframe: bool = False
@@ -448,7 +450,7 @@ class H264Encoder(Encoder):
         packages_packetize,package_nal=self._packetize(packages)
         frametype=self.get_frame_type(package_nal)
         
-        return packages_packetize, timestamp ,frametype#返回编码打包后的packet列表和时间戳
+        return packages_packetize, timestamp ,frametype,self.frame_size#返回编码打包后的packet列表和时间戳
 
     def pack(self, packet: Packet) -> Tuple[List[bytes], int]:
         assert isinstance(packet, av.Packet)
