@@ -347,6 +347,8 @@ class RTCRtpReceiver:
         self.last_arrival_bytes=0
         self.last_count=0
         self.recv_count=0
+        # 是否采用多流
+        self.use_multistream =True
     @property
     def track(self) -> MediaStreamTrack:
         """
@@ -437,18 +439,19 @@ class RTCRtpReceiver:
                     self._track._queue,#解码后输出的队列
                 ),
             )
-            #多流解码
             self.__decoder_thread.start()
-            self.__decoder_thread2 = threading.Thread(
-                target=decoder_worker,
-                name=self.__kind + "-decoder2",
-                args=(
-                    asyncio.get_event_loop(),
-                    self.__decoder_queue2,#待解码的队列
-                    self._track._queue,#解码后输出的队列
-                ),
-            )
-            self.__decoder_thread2.start()
+            #多流解码
+            if self.use_multistream:
+                self.__decoder_thread2 = threading.Thread(
+                    target=decoder_worker,
+                    name=self.__kind + "-decoder2",
+                    args=(
+                        asyncio.get_event_loop(),
+                        self.__decoder_queue2,#待解码的队列
+                        self._track._queue,#解码后输出的队列
+                    ),
+                )
+                self.__decoder_thread2.start()
 
             self.__transport._register_rtp_receiver(self, parameters)
             self.__rtcp_task = asyncio.ensure_future(self._run_rtcp())
@@ -610,7 +613,7 @@ class RTCRtpReceiver:
                 encoded_frame.timestamp
             )#获得了frame的pts
             encoded_frame.times_dur['time_in_dec_q'] = clock.current_ms()
-            if encoded_frame.stream_id == "2":
+            if self.use_multistream and encoded_frame.stream_id == "2":
                 self.__decoder_queue2.put((codec, encoded_frame))
             else:
                 self.__decoder_queue.put((codec, encoded_frame))
