@@ -58,7 +58,7 @@ def decoder_worker(loop, input_q, output_q):
             codec_name = codec.name
         #使用解码器对编码帧进行解码，得到解码后的帧
         for frame in decoder.decode(encoded_frame):
-            
+            # frame.pict_type.value==
             asyncio.run_coroutine_threadsafe(output_q.put(frame), loop) #将解码后的帧（frame）放入输出队列
             __log_debug('[DECODE] Add Render Frame...Stream id: %s, Number: %d, Type: %d', encoded_frame.stream_id, frame.index, frame.pict_type)
 

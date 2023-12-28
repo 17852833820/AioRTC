@@ -9,7 +9,7 @@ from typing import Callable, Dict, List, Optional, Union
 import cv2
 from av import AudioFrame
 from av.frame import Frame
-
+from .pacer.pacedsender import PacedSender
 from . import clock, rtp
 from .codecs import get_capabilities, get_encoder, is_rtx
 from .codecs.base import Encoder
@@ -49,7 +49,7 @@ class RTCEncodedFrame:
         self.timestamp = timestamp
         self.audio_level = audio_level
   
-class RTCRtpSender:
+class RTCRtpSender():
     """
     The :class:`RTCRtpSender` interface provides the ability to control and
     obtain details about how a particular :class:`MediaStreamTrack` is encoded
@@ -63,7 +63,7 @@ class RTCRtpSender:
     def __init__(self, trackOrKind: Union[MediaStreamTrack, str], transport) -> None:
         if transport.state == "closed":
             raise InvalidStateError
-
+        
         if isinstance(trackOrKind, MediaStreamTrack):
             self.__kind = trackOrKind.kind
             self.replaceTrack(trackOrKind)
@@ -122,6 +122,8 @@ class RTCRtpSender:
         self.use_multistream =True
         self.encode_mode=MultiEncodeMode()
         self.encode_role_forwart=False #前向：stream1向stream2切换，否则stream2向stream1切换
+        # Pacer
+        self.pace_sender:PacedSender=PacedSender()
     @property
     def kind(self):
         return self.__kind
@@ -633,3 +635,4 @@ class RTCRtpSender:
 
     def __log_warning(self, msg: str, *args) -> None:
         logger.warning(f"RTCRtpsender(%s) {msg}", self.__kind, *args)
+    
