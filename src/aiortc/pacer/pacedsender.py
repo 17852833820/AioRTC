@@ -2,7 +2,8 @@ from threading import Lock
 from enum import Enum,auto
 from typing import Optional, List,Callable
 from dataclasses import dataclass
-from .roundrobinpacketqueue import RoundRobinPacketQueue,RtpPacketToSend,RtpPacketMediaType
+from .roundrobinpacketqueue import RoundRobinPacketQueue
+from ..rtp import RtpPacketToSend,RtpPacketMediaType
 import logging
 import math
 from datetime import timedelta
@@ -59,7 +60,7 @@ class PacedSender:
         self.process_thread_ :Optional[threading.Thread] 
         
     # 1. 输入报文：将报文交给PacingController.enqueue_packet处理
-    def enqueue_packets(self, packets):
+    def enqueue_packets(self, packets:List[RtpPacketToSend]):
         with self.critsect_:
             for packet in packets:
                 self.pacing_controller_.enqueue_packet(packet)
@@ -86,7 +87,7 @@ class PacedSender:
     def set_pacing_rates(self,pacing_rate:int,padding_rate:int):
         with self.critsect_:
             self.pacing_controller_.set_pacing_rates(pacing_rate,padding_rate)     
-        self.maybe_wakeup_process_thread()   
+        self.maybe_wakeup_process_thread() # 唤醒出队发送线程  
     def set_account_for_audio(self,account_for_audio:bool):
         with self.critsect_:
             self.pacing_controller_.set_account_for_audio(account_for_audio)
@@ -124,8 +125,9 @@ class PacedSender:
     def maybe_wakeup_process_thread(self):
         # 在这里添加可能的唤醒处理线程逻辑
         # 告诉处理线程调用我们的 TimeUntilNextProcess() 方法以获取调用 Process() 的新时间。
-        if self.process_thread_ and self.process_mode_ == ProcessMode.kDynamic:
-            self.process_thread_.wake_up(module_proxy=self.module_proxy_)
+        # if self.process_thread_ and self.process_mode_ == ProcessMode.kDynamic:
+        #     self.process_thread_.wake_up(module_proxy=self.module_proxy_)
+        return
     def __del__(self):
         if self.process_thread_:
             self.process_thread_.put(None)
@@ -140,8 +142,8 @@ class PacingController:
         self._transport_overhead_per_packet:int = 0
         self._last_timestamp:int = clock.current_ms()
         self._paused:bool= False
-        self._media_budget:IntervalBudget = 0 # 周期调度模式中媒体数据的budget
-        self._padding_budget:IntervalBudget = 0# 周期调度模式中padding数据的budget
+        self._media_budget:IntervalBudget =  IntervalBudget(0,False) # 周期调度模式中媒体数据的budget
+        self._padding_budget:IntervalBudget = IntervalBudget(0,False)# 周期调度模式中padding数据的budget
         self._media_debt:int = 0
         self._padding_debt:int = 0
         self._media_rate:int = 0
@@ -154,7 +156,7 @@ class PacingController:
         self._queue_time_limit:int = kMaxExpectedQueueLength
         self._account_for_audio:bool = False
         self._include_overhead:bool = False
-        self._packet_queue:RoundRobinPacketQueue = RoundRobinPacketQueue(clock.current_ms())  # 报文队列
+        self._packet_queue:RoundRobinPacketQueue = RoundRobinPacketQueue(self._last_process_time)  # 报文队列
         self._packet_counter:int = 0 # 报文数量
         # logging
         self.__log_debug: Callable[..., None] = lambda *args: None
@@ -199,18 +201,18 @@ class PacingController:
             elapsed_time=self._update_time_and_get_elapsed(self.current_time())
             self.update_budget_with_elapsed_time(elapsed_time)
     def current_time(self)->int:
-        time=self._clock.currentTime()
+        time=clock.current_ms()
         if time<self._last_timestamp:
             self.__log_debug( "Non-monotonic clock behavior observed. Previous timestamp: %d , new timestamp: %d",self._last_timestamp_.ms(),time.ms())
             time=self._last_timestamp
         self._last_timestamp=time
         return time
     def set_pacing_rates(self,pacing_rate:int,padding_rate:int)->None:
-        self._media_rate=pacing_rate
-        self._padding_rate=padding_rate
-        self._pacing_bitrate=pacing_rate
-        self._padding_budget.set_target_rate_kbps(padding_rate)
-        self.__log_debug( "bwe:pacer_updated pacing_kbps= %d , padding_budget_kbps= %d ",self._pacing_bitrate.kbps(),self._padding_rate.kbps())
+        self._media_rate=pacing_rate #kbps
+        self._padding_rate=padding_rate #kbps
+        self._pacing_bitrate=pacing_rate #kbps
+        self._padding_budget.set_target_rate_kbps(padding_rate)#bps to kbps
+        logging.info( "bwe:pacer_updated pacing_kbps= %d , padding_budget_kbps= %d ",self._pacing_bitrate,self._padding_rate)
     def expected_queue_time(self)->int:
         assert self.pacing_bitrate > 0, "Pacing bitrate must be greater than zero."
         return timedelta(milliseconds=(self.queue_size_data()*8*1000)/self._pacing_bitrate)
@@ -334,21 +336,17 @@ class PacingController:
     # 报文输入：决策优先级并插入queue
     def enqueue_packet(self, packet:RtpPacketToSend):
         assert self._pacing_bitrate > 0, "SetPacingRate must be called before InsertPacket."
-        assert packet.packet_type, "Packet type must be set."
-        priority = get_priority_for_type(packet.packet_type)
+        assert packet._packet_type, "Packet type must be set."
+        # 获取当前报文的优先级
+        priority = get_priority_for_type(packet._packet_type)
         self.enqueue_packet_internal(packet, priority)#probing相关处理以及会根据Pacing的处理模式（动态和周期两种模式）做budget的更新
     # 报文输入：按照报文优先级，将报文插入queue
     def enqueue_packet_internal(self, packet:RtpPacketToSend, priority:int):
 
         # TODO: Make sure tests respect this, replace with DCHECK.
-        now = self.current_time()
+        now = self.current_time()# 入队时间
         if packet.capture_time_ms() < 0:
             packet.set_capture_time_ms(now.ms())
-        # 根据pacer的调度模式，进行budget的更新
-        if self._mode == ProcessMode.kDynamic and self._packet_queue_.empty() and self.next_send_time() <= now:
-            elapsed_time = self.update_time_and_get_elapsed(now)
-            self.update_budget_with_elapsed_time(elapsed_time)
-
         self._packet_queue.push(priority, now, self._packet_counter, packet)
         self._packet_counter += 1
     def should_send_keepalive(self,now:int)->bool:

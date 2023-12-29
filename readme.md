@@ -458,8 +458,45 @@ baseline 编码：
      1. 什么时候将P强制编码成I，即什么时候需要把I帧编码出备用P帧
      2. I帧传输完成后什么时候切换成备用流，需要有一个反馈信号，需扩展RTCP协议
 1. 扩展RTCP协议
+   协议：https://www.rfc-editor.org/rfc/rfc3550#section-5.2
+   【RFC4585】https://www.rfc-editor.org/info/rfc4585
+   - Transport layer FB messages
+   - Payload-specific FB messages
+   - Application layer FB messages
+    反馈包通用格式：
+    ![Alt text](tp2EQBzfwV.jpg)
+    - RTPFB  |  205  | Transport layer FB message
+      - 0:    unassigned
+      - 1:    Generic NACK
+      - 2-30: unassigned
+      - 31:   reserved for future expansion of the identifier number space
+    - PSFB   |  206  | Payload-specific FB message
+      - 0:     unassigned
+      - 1:     Picture Loss Indication (PLI)
+      - 2:     Slice Loss Indication (SLI)
+      - 3:     Reference Picture Selection Indication (RPSI)
+      - 4-14:  unassigned
+      - 15:    Application layer FB (AFB) message
+      - 16-30: unassigned
+      - 31:    reserved for future expansion of the sequence number space
+    IANA注册：https://www.iana.org/assignments/rtp-parameters/rtp-parameters.xhtml
+
+   扩展包的作用：当I帧接收完成时发送反馈信号，表示可以停止备用流的传输
+   扩展包PT：RTCP_PSFB = 206（Payload-specific FB messages）
+   现有PSFB类型的RTCP反馈包的fmt：
+   ![](.assert/截屏2023-12-26%2020.07.51.png)
+
 2. 设置编码器默认GOP长度较大
 3. 两个解码器复用编码
 4. 解码时需设置解码优先级：对每一张图像，先收到哪个stream的先解码哪个版本的帧，若先解码P帧用于渲染，待I帧到达解码后可用作参考帧供后续解码参考
 5. 状态机实现编码器的模式转换
-   
+## 2. 实现Pacer
+* PacedSender
+
+* RtpPacketPacer:作为一个Pacer需要实现的接口，主要包括拥塞窗口、pacing rate设置等
+* PacingController
+* RoundRobinPacketQueue
+
+1. 在RtpSender中，发送数据包是通过self.transport._send_rtp()实现，发送的报文类型：（1）视频报文（2）音频报文 （3）重传报文 （4）RTCP控制报文
+2. 去除self.transport._send_rtp()直接发送的部分，待发送的数据包全部通过PacedSender.enqueue_packets（）进入优先级队列
+3. 

@@ -2,93 +2,24 @@
 RoundRobinPacketQueue:pacer优先级队列相关代码
 """
 import heapq
-from enum import Enum,auto
 from typing import List, Dict
 from typing import Optional, Iterator
 from queue import PriorityQueue,Empty
 from typing import Iterator
 from datetime import datetime, timedelta
-from ..rtp import RtpPacket
 from typing import Optional,List
+from ..rtp import RtpPacketToSend,RtpPacketMediaType
 kMaxLeadingSize=1400 #Byte
-class RtpPacketMediaType(Enum):
-    kAudio = auto()                    # Audio media packets.
-    kVideo = auto()                    # Video media packets.
-    kRetransmission = auto()           # Retransmissions, sent as response to NACK.
-    kForwardErrorCorrection = auto()   # FEC packets.
-    kPadding = auto()                  # RTX or plain padding sent to maintain BWE.
+from collections import defaultdict
 
-class RtpPacketToSend(RtpPacket):
-    def __init__(self, payload_type: int = 0, marker: int = 0, sequence_number: int = 0, timestamp: int = 0, ssrc: int = 0, payload: bytes = b"") -> None:
-        super().__init__(payload_type, marker, sequence_number, timestamp, ssrc, payload)
-        self.capture_time_ms:int =0
-        self._packet_type:Optional[RtpPacketMediaType]=None
-        self._retransmitted_sequence_number: Optional[int] = None
-        self._allow_retransmission: bool = False
-        self._application_data: List[int] = []
-        self._is_first_packet_of_frame: bool = False
-        self._is_key_frame: bool = False
-    def set_capture_time_ms(self, time: int):
-        self._capture_time_ms = time
-
-    def set_packet_type(self, packet_type: RtpPacketMediaType):
-        self._packet_type = packet_type
-
-    def packet_type(self) -> Optional[RtpPacketMediaType]:
-        return self._packet_type
-
-    def set_retransmitted_sequence_number(self, sequence_number: int):
-        self._retransmitted_sequence_number = sequence_number
-
-    def retransmitted_sequence_number(self) -> Optional[int]:
-        return self._retransmitted_sequence_number
-
-    def set_allow_retransmission(self, allow_retransmission: bool):
-        self._allow_retransmission = allow_retransmission
-
-    def allow_retransmission(self) -> bool:
-        return self._allow_retransmission
-
-    def application_data(self) -> bytes:
-        return bytes(self._application_data)
-    # 应用程序特定数据
-    def set_application_data(self, data: bytes):
-        self._application_data = bytearray(data)
-
-    # def set_packetization_finish_time_ms(self, time: int):
-    #     delta = VideoSendTiming.GetDeltaCappedMs(self._capture_time_ms, time)
-    #     self.set_extension(VideoTimingExtension, delta, VideoTimingExtension.kPacketizationFinishDeltaOffset)
-
-    # def set_pacer_exit_time_ms(self, time: int):
-    #     delta = VideoSendTiming.GetDeltaCappedMs(self.capture_time_ms, time)
-    #     self.set_extension(VideoTimingExtension, delta, VideoTimingExtension.kPacerExitDeltaOffset)
-
-    # def set_network_time_ms(self, time: int):
-    #     delta = VideoSendTiming.GetDeltaCappedMs(self.capture_time_ms, time)
-    #     self.set_extension(VideoTimingExtension, delta, VideoTimingExtension.kNetworkTimestampDeltaOffset)
-
-    # def set_network2_time_ms(self, time: int):
-    #     delta = VideoSendTiming.GetDeltaCappedMs(self.capture_time_ms, time)
-    #     self.set_extension(VideoTimingExtension, delta, VideoTimingExtension.kNetwork2TimestampDeltaOffset)
-
-    def set_first_packet_of_frame(self, is_first_packet: bool):
-        self._is_first_packet_of_frame = is_first_packet
-
-    def is_first_packet_of_frame(self) -> bool:
-        return self._is_first_packet_of_frame
-
-    def set_is_key_frame(self, is_key_frame: bool):
-        self._is_key_frame = is_key_frame
-
-    def is_key_frame(self) -> bool:
-        return self._is_key_frame
+# 每一路流有一个优先级队列
 class Stream:
     def __init__(self):
         # 默认构造函数
         self.size = 0  # 已经发送的报文总大小，
         self.ssrc = 0  # 数据流的同步源标识符
         self.packet_queue = PriorityPacketQueue()  # 使用优先级队列管理数据包的队列
-        self.priority_it = Dict[StreamPrioKey, List[int]]  # 迭代器，用于指向某个元素，这里可能是一个索引或其他标识
+        self.priority_it : Dict[StreamPrioKey, int] ={} # 迭代器，用于指向某个元素，这里可能是一个索引或其他标识
 
     # 拷贝构造函数（这里没有特别的拷贝构造函数，因为 Python 通常使用引用计数来处理对象的复制）
 
@@ -108,15 +39,15 @@ class StreamPrioKey:
 
     
 
-class QueuedPacket:
+class QueuedPacket: #用于排队的packet
     def __init__(self, priority: int, enqueue_time: int, enqueue_order: int,
-                 enqueue_time_it: Optional[Iterator[int]], packet: RtpPacketToSend):
+                 enqueue_time_it: Optional[int], packet: RtpPacketToSend):
         self._priority = priority
-        self._enqueue_time = enqueue_time
+        self._enqueue_time = enqueue_time #ms
         self._enqueue_order = enqueue_order
-        self._is_retransmission = (packet.packet_type == RtpPacketMediaType.kRetransmission)
+        self._is_retransmission = (packet._packet_type == RtpPacketMediaType.kRetransmission)
         self._enqueue_time_it = enqueue_time_it
-        self._owned_packet = packet.release()
+        self._owned_packet = packet #RTP报文
 
     def __lt__(self, other: 'QueuedPacket') -> bool:
         if (self._priority != other.priority_):
@@ -135,7 +66,7 @@ class QueuedPacket:
 
     def ssrc(self) -> int:
         # Placeholder for the actual logic
-        return self._owned_packet.ssrc()
+        return self._owned_packet.ssrc
 
     def enqueue_time(self) -> int:
         return self._enqueue_time
@@ -149,10 +80,10 @@ class QueuedPacket:
     def rtp_packet(self) -> RtpPacketToSend:
         return self._owned_packet
 
-    def enqueue_time_iterator(self) -> Optional[Iterator[int]]:
+    def enqueue_time_iterator(self) -> Optional[int]:
         return self._enqueue_time_it
 
-    def update_enqueue_time_iterator(self, it: Optional[Iterator[int]]):
+    def update_enqueue_time_iterator(self, it: Optional[int]):
         self._enqueue_time_it = it
 
     def subtract_pause_time(self, pause_time_sum: int):
@@ -180,25 +111,25 @@ class PriorityPacketQueue():
 class RoundRobinPacketQueue:
     def __init__(self,start_time) -> None:
         self._transport_overhead_per_packet_:int=0
-        self._time_last_updated:int=start_time
+        self._time_last_updated:int=start_time #最近一次入队时间
         self._paused:bool=False
-        self._size_packets:int=0 # 报文数量
+        self._size_packets:int=0 # 报文总数量
         self._max_size:int=kMaxLeadingSize #最大报文数量
         self._size:int=0 #报文总字节数
         self._queue_time_sum:int=0
-        self._pause_time_sum: int=0
-        self._stream_priorities: dict[StreamPrioKey, int] # streampropkey-ssrc map
-        self._streams: dict[int, Stream] #ssrc stream map
-        self._enqueue_times: PriorityQueue[int] #报文入队时间，用于找到最老的报文时间
-        self._single_packet_queue: Optional[QueuedPacket] #存一个报文的queue
+        self._pause_time_sum: int=0 #队列被暂停的总时间
+        self._stream_priorities: Dict[StreamPrioKey, int] ={}# streampropkey-ssrc map 被调度的stream
+        self._streams: Dict[int, Stream] ={}#ssrc stream map
+        self._enqueue_times: List[int] =[]#报文入队时间，用于找到最老的报文时间
+        self._single_packet_queue: Optional[QueuedPacket] =None#存一个报文的queue
         self._include_overhead: bool=False
     def packet_size(self,packet:QueuedPacket)->int:
-        packet_size=packet.rtp_packet().payload_size()+packet.rtp_packet.padding_size()
+        packet_size=packet.rtp_packet().payload_size+packet.rtp_packet().padding_size
         return packet_size
     def maybe_promote_single_packet_to_normal_queue(self)->None:
         if self._single_packet_queue:
-            self.push(self._single_packet_queue)
-            self._single_packet_queue.reset()
+            self.push_pkt(self._single_packet_queue)
+            self._single_packet_queue=None
     def get_highest_priority_stream(self):
         if not self._stream_priorities:
             return None
@@ -209,13 +140,13 @@ class RoundRobinPacketQueue:
         return None
     # 插入不同优先级的报文
     def push(self,priority:int,enqueue_time:int,enqueue_order:int,packet:RtpPacketToSend)->None:
-        assert packet.packet_type is not None, "Packet type must have a value."
-        # 没有存书任何报文时直接存在_single_packet_queue中，不进队列
+        assert packet._packet_type is not None, "Packet type must have a value."
+        # 没有存任何报文时直接存在_single_packet_queue中，不进队列
         if self._size_packets == 0:
             # Single packet fast-path.
             self._single_packet_queue = QueuedPacket(
                 priority, enqueue_time, enqueue_order,
-                self._enqueue_times.end() if self._enqueue_times else None,
+                len(self._enqueue_times),
                 packet
             )
             self.update_queue_time(enqueue_time)
@@ -225,14 +156,15 @@ class RoundRobinPacketQueue:
         else:
             # 如果_single_packet_queue有数据，先push到queue中
             self.maybe_promote_single_packet_to_normal_queue()
-            #调用另外一个push函数插入到队列中
-            self.push(QueuedPacket(
+            #调用push函数将本次要入队的报文插入到队列中
+            self._enqueue_times.append(enqueue_time)
+            self.push_pkt(QueuedPacket(
                 priority, enqueue_time, enqueue_order,
-                self._enqueue_times.insert(enqueue_time),
+                len(self._enqueue_times),
                 packet
             ))
     # 插入数据到队列中
-    def push(self,packet:QueuedPacket):
+    def push_pkt(self,packet:QueuedPacket):
         # 1. 根据报文ssrc找到对应的stream，没有找到则创建一个新的stream
         stream_info=self._streams.get(packet.ssrc())
         if stream_info is None:
@@ -243,20 +175,24 @@ class RoundRobinPacketQueue:
         # 2. 若该stream没有被调度，则加入stream_priorities
         if stream.priority_it is None:
             assert not self.is_ssrc_scheduled(stream.ssrc)
-            stream.priority_it=self._stream_priorities[StreamPrioKey(packet.priority,stream.size)] = packet.ssrc
-        # 3. 若当前报文优先级比之前的小，说明优先级有变化，更新优先级
-        elif packet.priority < stream.priority_it.priority:
-            del self._stream_priorities[stream.priority_it]
-            stream.priority_it=self._stream_priorities[StreamPrioKey(packet.priority,stream.size)]=packet.ssrc
+            stream.priority_it[StreamPrioKey(packet.priority,stream.size)] = packet.ssrc
+            self._stream_priorities[StreamPrioKey(packet.priority,stream.size)] = packet.ssrc
+        # 3. 如果当前数据包的优先级小于与其关联的流的优先级
+        elif packet.priority < stream.priority_it.keys():
+            del self._stream_priorities[(stream.priority_it)]
+            stream.priority_it[StreamPrioKey(packet.priority,stream.size)]=packet.ssrc
+            self._stream_priorities[StreamPrioKey(packet.priority,stream.size)]=packet.ssrc
         assert stream.priority_it is not None
-        
-        if packet.enqueue_time_it==self._enqueue_times.end():
-            packet.update_enqueue_time_it(self._enqueue_times.insert(packet.enqueue_time()))
-        else:
-            self.update_queue_time(packet.enqueue_time)
-            packet.subtract_pause_time(self._pause_time_sum)
+        # 判断入队时间迭代器是否在队列的末尾，如果在，说明该包是从单包队列single-packet queue提升上来的，只需将入队时间添加到 enqueue_times_
+        if packet.enqueue_time_iterator()==len(self._enqueue_times):# 当前报文的入队时间和历史报文入队时间比较，若入队时间相同
+            self._enqueue_times.append(packet.enqueue_time())
+            packet.update_enqueue_time_iterator(len(self._enqueue_times))
+        else:# 正常入队的情况：需要更新队列的相关信息
+            self.update_queue_time(packet.enqueue_time())# 更新队列中包的总时间
+            packet.subtract_pause_time(self._pause_time_sum)# 减去队列被暂停的总时间，以便计算包在队列中的实际时间
             self._size_packets+=1
             self._size+=self.packet_size(packet)
+        #报文入队
         stream.packet_queue.push(packet)
     # 弹出一个即将发送的报文
     def pop(self)->RtpPacketToSend:
@@ -327,16 +263,16 @@ class RoundRobinPacketQueue:
         if self.empty():
             return 0
         return self._queue_time_sum/self._size_packets
-    # 更新内部状态
+    # 更新内部状态:队列中包的总时间
     def update_queue_time(self,now:int):
         assert self._time_last_updated <= now
         if now ==self._time_last_updated:
             return 
-        delta=now-self._time_last_updated
+        delta=now-self._time_last_updated #ms
         if self._paused:
-            self._pause_time_sum+=delta
+            self._pause_time_sum+=delta #队列被暂停的总时间
         else:
-            self._queue_time_sum+=timedelta(microseconds=delta.microseconds*self._size_packets)
+            self._queue_time_sum+=delta*self._size_packets #ms 队列中的总时间
         self._time_last_updated=now
     # 暂停queue处理    
     def set_pause_state(self,paused:bool,now:int):

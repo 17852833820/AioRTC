@@ -4,6 +4,7 @@ import struct
 from dataclasses import dataclass, field
 from struct import pack, unpack, unpack_from
 from typing import Any, List, Optional, Tuple, Union
+from enum import Enum,auto
 
 from av import AudioFrame
 
@@ -692,6 +693,7 @@ class RtpPacket:
         self.extensions = HeaderExtensions()
         self.payload = payload
         self.padding_size = 0
+        self.payload_size = 0
 
     def __repr__(self) -> str:
         return (
@@ -699,7 +701,7 @@ class RtpPacket:
             f"marker={self.marker}, payload={self.payload_type}, "
             f"{len(self.payload)} bytes)"
         )
-
+    
     @classmethod
     def parse(cls, data: bytes, extensions_map=HeaderExtensionsMap()):
         if len(data) < RTP_HEADER_LENGTH:
@@ -751,6 +753,7 @@ class RtpPacket:
             packet.payload = data[pos:-padding_len]
         else:
             packet.payload = data[pos:]
+        packet.payload_size=len(packet.payload)
 
         return packet
 
@@ -805,7 +808,7 @@ def wrap_rtx(
     """
     Create a retransmission packet from a lost packet.
     """
-    rtx = RtpPacket(
+    rtx = RtpPacketToSend(
         payload_type=payload_type,
         sequence_number=sequence_number,
         timestamp=packet.timestamp,
@@ -815,3 +818,72 @@ def wrap_rtx(
     rtx.csrc = packet.csrc
     rtx.extensions = packet.extensions
     return rtx
+class RtpPacketMediaType(Enum):
+    kAudio = auto()                    # Audio media packets.
+    kVideo = auto()                    # Video media packets.
+    kRetransmission = auto()           # Retransmissions, sent as response to NACK.
+    kForwardErrorCorrection = auto()   # FEC packets.
+    kPadding = auto()                  # RTX or plain padding sent to maintain BWE.
+
+class RtpPacketToSend(RtpPacket):
+    def __init__(self, payload_type: int = 0, marker: int = 0, sequence_number: int = 0, timestamp: int = 0, ssrc: int = 0, payload: bytes = b"") -> None:
+        super().__init__(payload_type, marker, sequence_number, timestamp, ssrc, payload)
+        self._capture_time_ms:int =0
+        self._packet_type:Optional[RtpPacketMediaType]=None
+        self._retransmitted_sequence_number: Optional[int] = None
+        self._allow_retransmission: bool = False
+        self._application_data: List[int] = []
+        self._is_first_packet_of_frame: bool = False
+        self._is_key_frame: bool = False
+    def set_capture_time_ms(self, time: int):
+        self._capture_time_ms = time
+    def capture_time_ms(self)->int:
+        return self._capture_time_ms
+    def set_packet_type(self, packet_type: RtpPacketMediaType):
+        self._packet_type = packet_type
+ 
+    def set_retransmitted_sequence_number(self, sequence_number: int):
+        self._retransmitted_sequence_number = sequence_number
+
+    def retransmitted_sequence_number(self) -> Optional[int]:
+        return self._retransmitted_sequence_number
+
+    def set_allow_retransmission(self, allow_retransmission: bool):
+        self._allow_retransmission = allow_retransmission
+
+    def allow_retransmission(self) -> bool:
+        return self._allow_retransmission
+
+    def application_data(self) -> bytes:
+        return bytes(self._application_data)
+    # 应用程序特定数据
+    def set_application_data(self, data: bytes):
+        self._application_data = bytearray(data)
+
+    # def set_packetization_finish_time_ms(self, time: int):
+    #     delta = VideoSendTiming.GetDeltaCappedMs(self._capture_time_ms, time)
+    #     self.set_extension(VideoTimingExtension, delta, VideoTimingExtension.kPacketizationFinishDeltaOffset)
+
+    # def set_pacer_exit_time_ms(self, time: int):
+    #     delta = VideoSendTiming.GetDeltaCappedMs(self.capture_time_ms, time)
+    #     self.set_extension(VideoTimingExtension, delta, VideoTimingExtension.kPacerExitDeltaOffset)
+
+    # def set_network_time_ms(self, time: int):
+    #     delta = VideoSendTiming.GetDeltaCappedMs(self.capture_time_ms, time)
+    #     self.set_extension(VideoTimingExtension, delta, VideoTimingExtension.kNetworkTimestampDeltaOffset)
+
+    # def set_network2_time_ms(self, time: int):
+    #     delta = VideoSendTiming.GetDeltaCappedMs(self.capture_time_ms, time)
+    #     self.set_extension(VideoTimingExtension, delta, VideoTimingExtension.kNetwork2TimestampDeltaOffset)
+
+    def set_first_packet_of_frame(self, is_first_packet: bool):
+        self._is_first_packet_of_frame = is_first_packet
+
+    def is_first_packet_of_frame(self) -> bool:
+        return self._is_first_packet_of_frame
+
+    def set_is_key_frame(self, is_key_frame: bool):
+        self._is_key_frame = is_key_frame
+
+    def is_key_frame(self) -> bool:
+        return self._is_key_frame
