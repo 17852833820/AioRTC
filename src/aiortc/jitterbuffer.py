@@ -32,7 +32,7 @@ class JitterBuffer:
     def capacity(self) -> int:
         return self._capacity
 
-    def add(self, packet: RtpPacket) -> Tuple[bool, Optional[JitterFrame]]:
+    def add(self, packet: RtpPacket) -> Tuple[bool, Optional[JitterFrame],int]:
         pli_flag = False
         if self._origin is None:# # 如果缓冲区的起始序列号为空，表示这是第一个数据包，设置起始序列号和相关变量
             self._origin = packet.sequence_number
@@ -50,7 +50,7 @@ class JitterBuffer:
                 if self._is_video:
                     pli_flag = True
             else:
-                return pli_flag, None
+                return pli_flag, None,None
         # 如果差值超过缓冲区的容量，移除多余的帧，确保缓冲区中只存储最新的数据
         if delta >= self.capacity: #如果包的序列号超过缓冲区的容量（self.capacity），则移除多余的帧，确保缓冲区中只存储最新的数据
             # remove just enough frames to fit the received packets
@@ -67,9 +67,10 @@ class JitterBuffer:
         self.t1=current_ms()
         # if packet.timestamp not in self._packet_times_in: self._packet_times_in[packet.timestamp] = 0  #_packet_times_in记录该帧所有数据包的接收时间
         # self._packet_times_in[packet.timestamp]=current_ms()
-        return pli_flag, self._remove_frame(packet.sequence_number)
+        encodeframe,jit_dur=self._remove_frame(packet.sequence_number)
+        return pli_flag, encodeframe,jit_dur
     """从缓冲区中移除一个完整的 RTP 帧"""
-    def _remove_frame(self, sequence_number: int) -> Optional[JitterFrame]:
+    def _remove_frame(self, sequence_number: int) -> Tuple[Optional[JitterFrame],int]:
         frame = None
         frames = 0
         packets = []

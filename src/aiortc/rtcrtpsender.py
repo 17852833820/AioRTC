@@ -120,11 +120,10 @@ class RTCRtpSender():
         self._data=None
         self.__encoder_two: Optional[Encoder] = None
         # self.IDR_receive_finished=False
-        self.use_multistream =True
+        self.use_multistream =False
         self.encode_mode=MultiEncodeMode()
         self.encode_role_forwart=False #前向：stream1向stream2切换，否则stream2向stream1切换
-        # Pacer
-        self.pace_sender:PacedSender=PacedSender()
+        self.pace_sender:Optional[PacedSender]=None
     @property
     def kind(self):
         return self.__kind
@@ -214,8 +213,13 @@ class RTCRtpSender():
                 ):#查找RTX编解码器并记录其负载类型
                     self.__rtx_payload_type = codec.payloadType
                     break
-            # Version 2:设置Pacer初始比特率
-            self.pace_sender.set_pacing_rates(DEFAULT_BITRATE,DEFAULT_BITRATE)
+            #=======================================Version 2===============================================
+            # Pacer
+            self.pace_sender=PacedSender(self.__transport,self.__rtp_header_extensions_map)
+            
+            # 设置Pacer初始比特率
+            self.pace_sender.set_pacing_rates(DEFAULT_BITRATE/1024,0)# bps to Kbps
+            #===============================================================================================
             #启动RTP和RTCP任务：分别启动异步任务_run_rtp和_run_rtcp
             if self.use_multistream:
                 self.__rtp_task = asyncio.ensure_future(self._run_rtp_multi_stream(parameters.codecs[0]))
@@ -282,11 +286,15 @@ class RTCRtpSender():
             try:
                 bitrate, ssrcs = unpack_remb_fci(packet.fci)#REMB反馈的带宽估计
                 if self._ssrc in ssrcs:
-                    self.__log_debug(
-                        "- receiver estimated maximum bitrate %d bps", bitrate
-                    )
+                    # 更新编码速率
                     if self.__encoder and hasattr(self.__encoder, "target_bitrate"):
                         self.__encoder.target_bitrate = bitrate
+                    # 更新pacer速率
+                    pacing_rate=(2.5*bitrate)/1024
+                    self.pace_sender.set_pacing_rates(pacing_rate,0)# kbps
+                    self.__log_debug(
+                        "BWE | receiver estimated maximum bitrate Target bitrate:%d bps,encode bitrate:%d,pacing bitrate:%d", bitrate,self.__encoder.target_bitrate,pacing_rate
+                    )
             except ValueError:
                 pass
 
@@ -325,6 +333,7 @@ class RTCRtpSender():
         """
         Retransmit an RTP packet which was reported as lost.
         """
+        packets=[]
         packet = self.__rtp_history.get(sequence_number % RTP_HISTORY_SIZE)
         if packet and packet.sequence_number == sequence_number:
             if self.__rtx_payload_type is not None:
@@ -339,13 +348,13 @@ class RTCRtpSender():
                 packet.set_packet_type(RtpPacketMediaType.kRetransmission)
                 packet.set_retransmitted_sequence_number(self.__rtx_sequence_number)
                 self.__rtx_sequence_number = uint16_add(self.__rtx_sequence_number, 1)
-
+                packets.append(packet)
             
             # packet_bytes = packet.serialize(self.__rtp_header_extensions_map)
             # Version2:
             # await self.transport._send_rtp(packet_bytes)
             # 组装RtpPacketToSend并入队
-            self.pace_sender.enqueue_packets(packet)
+            self.pace_sender.enqueue_packets(packets)
 
     def _send_keyframe(self) -> None:
         """
@@ -397,21 +406,21 @@ class RTCRtpSender():
                 
                 # 编码下一帧
                 self._data = await self.__track.recv()
-                enc_frame, enc_dur ,frame_type= await self._next_encoded_frame(codec) #返回了一帧图像编码后产生的数据：编码打包后的packet列表和时间戳，enc_dur为编码一张图像花费的时间
+                enc_frame, enc_dur ,frame_type,frame_size= await self._next_encoded_frame(codec) #返回了一帧图像编码后产生的数据：编码打包后的packet列表和时间戳，enc_dur为编码一张图像花费的时间
                 # 对于正常P帧编码的stream，正常传输直到编码器停止返回None
                 timestamp = uint32_add(timestamp_origin, enc_frame.timestamp)
-                self.__log_debug('[FRAME_INFO] Stream id : 1, Number: %d, PTS: %d, enc_dur: %d Type: %d', frame_number,timestamp, enc_dur,frame_type.value)
+                self.__log_debug('[FRAME_INFO] Stream id : 1, Number: %d, PTS: %d, enc_dur: %d Type: %s, size: %d', frame_number,timestamp, enc_dur,frame_type.name,frame_size)
                 # 遍历每个packet并为其创建一个RTP数据包
                 packets=[]
                 for i, payload in enumerate(enc_frame.payloads):
-                    # Version 1
+                    # ======================================Version 1 ==============================================
                     # packet = RtpPacket(
                     #     payload_type=codec.payloadType,
                     #     sequence_number=sequence_number,
                     #     timestamp=timestamp,
                     # )
-                    
-                    # Version2
+                    #===============================================================================================
+                    #=======================================Version 2===============================================
                     packet=RtpPacketToSend(
                         payload_type=codec.payloadType,
                         sequence_number=sequence_number,
@@ -424,6 +433,7 @@ class RTCRtpSender():
                         packet.set_is_key_frame(True)
                     else:
                         packet.set_is_key_frame(False)
+                    #===============================================================================================
                     packet.ssrc = self._ssrc
                     packet.payload = payload
                     packet.marker = (i == len(enc_frame.payloads) - 1) and 1 or 0 #用于指示当前数据包是否是一个帧（frame）的最后一个数据包
@@ -442,9 +452,12 @@ class RTCRtpSender():
                     self.__rtp_history[
                         packet.sequence_number % RTP_HISTORY_SIZE
                     ] = packet
+                    # ======================================Version 1 ==============================================
                     # packet_bytes = packet.serialize(self.__rtp_header_extensions_map) #一个RTP packet
-                    # Version2:
                     # await self.transport._send_rtp(packet_bytes)
+                    #===============================================================================================
+
+                    #=======================================Version 2===============================================
                     # 组装RtpPacketToSend并入队
                     packets.append(packet)
                     # 更新统计信息
@@ -454,7 +467,9 @@ class RTCRtpSender():
                     self.__octet_count += len(payload)
                     self.__packet_count += 1
                     sequence_number = uint16_add(sequence_number, 1)
+                #=======================================Version 2===============================================
                 self.pace_sender.enqueue_packets(packets)
+                #===============================================================================================
                 # 计算发送速率
                 if self.timestamp-self.last_timestamp>1000:
                     self.send_rate=((self.__octet_count-self.last_octet)*8)/((self.timestamp-self.last_timestamp)/1000)
@@ -510,24 +525,30 @@ class RTCRtpSender():
                     # 遍历每个packet并为其创建一个RTP数据包
                     packets=[]
                     for i, payload in enumerate(enc_frame.payloads):
-                        # Version 2
-                        # packet=RtpPacketToSend(
+                        #=======================================Version 1===============================================
+
+                        # packet=RtpPacket(
                         # payload_type=codec.payloadType,
                         # sequence_number=sequence_number,
                         # timestamp=timestamp,
                         # )
-                        packet=RtpPacket(
+                        #================================================================================================
+                        #=======================================Version 2===============================================
+                        packet=RtpPacketToSend(
                         payload_type=codec.payloadType,
                         sequence_number=sequence_number,
                         timestamp=timestamp,
                         )
-                        # packet.set_packet_type(RtpPacketMediaType.kVideo)
-                        # packet.set_allow_retransmission(True)
-                        # packet.set_first_packet_of_frame(i==0)
-                        # if frame_type.value==0 or frame_type.value==4:
-                        #     packet.set_is_key_frame(True)
-                        # else:
-                        #     packet.set_is_key_frame(False)
+                        
+                        packet.set_packet_type(RtpPacketMediaType.kVideo)
+                        packet.set_allow_retransmission(True)
+                        packet.set_first_packet_of_frame(i==0)
+                        if frame_type.value==0 or frame_type.value==4:
+                            packet.set_is_key_frame(True)
+                        else:
+                            packet.set_is_key_frame(False)
+                        #================================================================================================
+
                         packet.ssrc = self._ssrc
                         packet.payload = payload
                         packet.payload_size=len(payload)
@@ -547,11 +568,14 @@ class RTCRtpSender():
                         self.__rtp_history[
                             packet.sequence_number % RTP_HISTORY_SIZE
                         ] = packet
-                        packet_bytes = packet.serialize(self.__rtp_header_extensions_map) #一个RTP packet
-                        await self.transport._send_rtp(packet_bytes)
-                        # Version2:
+                        #=======================================Version 1===============================================
+                        # packet_bytes = packet.serialize(self.__rtp_header_extensions_map) #一个RTP packet
+                        # await self.transport._send_rtp(packet_bytes)
+                        #================================================================================================
+                        #=======================================Version 2===============================================
                         # 组装RtpPacketToSend并入队
                         packets.append(packet)
+                        #================================================================================================
                         # 更新统计信息
                         self.__ntp_timestamp = clock.current_ntp_time()
                         self.timestamp=clock.current_ms()
@@ -559,7 +583,9 @@ class RTCRtpSender():
                         self.__octet_count += len(payload)
                         self.__packet_count += 1
                         sequence_number = uint16_add(sequence_number, 1)
-                    # self.pace_sender.enqueue_packets(packets)
+                    #=======================================Version 2===============================================
+                    self.pace_sender.enqueue_packets(packets)
+                    #================================================================================================
                 # 对于强制I帧编码的stream，传输I帧，跳过I帧后的5个P帧后再开启传输
                 # if (enc_frame_two and (frame_type_two.value==0 or frame_type_two.value == 4)) or (enc_frame_two and self.condition_Finish_event.is_set()):
                 if  (self.encode_role_forwart and self.encode_mode.current_state!="S2") or (not self.encode_role_forwart and self.encode_mode.current_state!="S3" and self.encode_mode.current_state!="S0"):
@@ -568,24 +594,27 @@ class RTCRtpSender():
                     self.__log_debug('[FRAME_INFO] Stream id : 2, Number: %d, PTS: %d, enc_dur: %d Type: %s, size: %d', frame_number,timestamp, enc_dur_two,frame_type_two.name,frame_size_two)
                     packets=[]
                     for i, payload in enumerate(enc_frame_two.payloads):
-                        #Version 2
-                        # packet=RtpPacketToSend(
+                        #=======================================Version 1===============================================
+                        # packet=RtpPacket(
                         # payload_type=codec.payloadType,
                         # sequence_number=sequence_number,
                         # timestamp=timestamp,
                         # )
-                        packet=RtpPacket(
+                        #=======================================Version 2===============================================
+                        packet=RtpPacketToSend(
                         payload_type=codec.payloadType,
                         sequence_number=sequence_number,
                         timestamp=timestamp,
                         )
-                        # packet.set_packet_type(RtpPacketMediaType.kVideo)
-                        # packet.set_allow_retransmission(True)
-                        # packet.set_first_packet_of_frame(i==0)
-                        # if frame_type.value==0 or frame_type.value==4:
-                            # packet.set_is_key_frame(True)
-                        # else:
-                            # packet.set_is_key_frame(False)
+                        
+                        packet.set_packet_type(RtpPacketMediaType.kVideo)
+                        packet.set_allow_retransmission(True)
+                        packet.set_first_packet_of_frame(i==0)
+                        if frame_type.value==0 or frame_type.value==4:
+                            packet.set_is_key_frame(True)
+                        else:
+                            packet.set_is_key_frame(False)
+                        #===============================================================================================
                         packet.ssrc = self._ssrc
                         packet.payload = payload
                         packet.payload_size=len(payload)
@@ -605,19 +634,24 @@ class RTCRtpSender():
                         self.__rtp_history[
                             packet.sequence_number % RTP_HISTORY_SIZE
                         ] = packet
-                        packet_bytes = packet.serialize(self.__rtp_header_extensions_map) #一个RTP packet
-                        await self.transport._send_rtp(packet_bytes)
-                        # Version2:
+                        #=======================================Version 1===============================================                        
+                        # packet_bytes = packet.serialize(self.__rtp_header_extensions_map) #一个RTP packet
+                        # await self.transport._send_rtp(packet_bytes)
+                        #===============================================================================================
+                        
+                        #=======================================Version 2===============================================
                         # 组装RtpPacketToSend并入队
-                        # 更新统计信息
                         packets.append(packet)
+                        #===============================================================================================
                         self.__ntp_timestamp = clock.current_ntp_time()
                         self.timestamp=clock.current_ms()
                         self.__rtp_timestamp = packet.timestamp
                         self.__octet_count += len(payload)
                         self.__packet_count += 1
                         sequence_number = uint16_add(sequence_number, 1)
-                    # self.pace_sender.enqueue_packets(packets)
+                    #=======================================Version 2===============================================
+                    self.pace_sender.enqueue_packets(packets)
+                    #===============================================================================================
                 # 计算发送速率
                 if self.timestamp-self.last_timestamp>1000:
                     self.send_rate=((self.__octet_count-self.last_octet)*8)/((self.timestamp-self.last_timestamp)/1000)

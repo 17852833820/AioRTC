@@ -592,7 +592,7 @@ class RTCRtpReceiver:
             return
 
         # try to re-assemble encoded frame 尝试重新组装编码帧
-        pli_flag, (encoded_frame, jit_dur) = self.__jitter_buffer.add(packet)#向抖动缓冲区（Jitter Buffer）添加 RTP 包
+        pli_flag, encoded_frame, jit_dur = self.__jitter_buffer.add(packet)#向抖动缓冲区（Jitter Buffer）添加 RTP 包
         if jit_dur is not None: 
             self.__log_debug('[FRAME_INFO] T: %d, jit_dur: %d, Bytes: %d', encoded_frame.timestamp, jit_dur, len(encoded_frame.data))
         # check if the PLI should be sent 如果成功获得完整的编码帧，检查是否需要发送PLI RTCP包

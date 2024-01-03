@@ -17,7 +17,7 @@ RTP_HISTORY_SIZE = 128
 FORBIDDEN_PAYLOAD_TYPES = range(72, 77)
 DYNAMIC_PAYLOAD_TYPES = range(96, 128)
 
-RTP_HEADER_LENGTH = 12
+RTP_HEADER_LENGTH = 13 # 原始12字节，增加1字节
 RTCP_HEADER_LENGTH = 4
 
 PACKETS_LOST_MIN = -(1 << 23)
@@ -694,6 +694,7 @@ class RtpPacket:
         self.payload = payload
         self.padding_size = 0
         self.payload_size = 0
+        self.header_size=0
 
     def __repr__(self) -> str:
         return (
@@ -702,129 +703,112 @@ class RtpPacket:
             f"{len(self.payload)} bytes)"
         )
     
-    @classmethod
-    def parse(cls, data: bytes, extensions_map=HeaderExtensionsMap()):
-        if len(data) < RTP_HEADER_LENGTH:
-            raise ValueError(
-                f"RTP packet length is less than {RTP_HEADER_LENGTH} bytes"
-            )
+    # @classmethod
+    # def parse(cls, data: bytes, extensions_map=HeaderExtensionsMap()):
+    #     if len(data) < RTP_HEADER_LENGTH:
+    #         raise ValueError(
+    #             f"RTP packet length is less than {RTP_HEADER_LENGTH} bytes"
+    #         )
 
-        v_p_x_cc, m_pt, sequence_number, timestamp, ssrc = unpack("!BBHLL", data[0:12])
-        version = v_p_x_cc >> 6
-        padding = (v_p_x_cc >> 5) & 1
-        extension = (v_p_x_cc >> 4) & 1
-        cc = v_p_x_cc & 0x0F
-        if version != 2:
-            raise ValueError("RTP packet has invalid version")
-        if len(data) < RTP_HEADER_LENGTH + 4 * cc:
-            raise ValueError("RTP packet has truncated CSRC")
+    #     v_p_x_cc, m_pt, sequence_number, timestamp, ssrc = unpack("!BBHLL", data[0:12])
+    #     version = v_p_x_cc >> 6
+    #     padding = (v_p_x_cc >> 5) & 1
+    #     extension = (v_p_x_cc >> 4) & 1
+    #     cc = v_p_x_cc & 0x0F
+    #     if version != 2:
+    #         raise ValueError("RTP packet has invalid version")
+    #     if len(data) < RTP_HEADER_LENGTH + 4 * cc:
+    #         raise ValueError("RTP packet has truncated CSRC")
 
-        packet = cls(
-            marker=(m_pt >> 7),
-            payload_type=(m_pt & 0x7F),
-            sequence_number=sequence_number,
-            timestamp=timestamp,
-            ssrc=ssrc,
-        )
+    #     packet = cls(
+    #         marker=(m_pt >> 7),
+    #         payload_type=(m_pt & 0x7F),
+    #         sequence_number=sequence_number,
+    #         timestamp=timestamp,
+    #         ssrc=ssrc,
+    #     )
 
-        pos = RTP_HEADER_LENGTH
-        for i in range(0, cc):
-            packet.csrc.append(unpack_from("!L", data, pos)[0])
-            pos += 4
+    #     pos = RTP_HEADER_LENGTH
+    #     for i in range(0, cc):
+    #         packet.csrc.append(unpack_from("!L", data, pos)[0])
+    #         pos += 4
 
-        if extension:
-            if len(data) < pos + 4:
-                raise ValueError("RTP packet has truncated extension profile / length")
-            extension_profile, extension_length = unpack_from("!HH", data, pos)
-            extension_length *= 4
-            pos += 4
+    #     if extension:
+    #         if len(data) < pos + 4:
+    #             raise ValueError("RTP packet has truncated extension profile / length")
+    #         extension_profile, extension_length = unpack_from("!HH", data, pos)
+    #         extension_length *= 4
+    #         pos += 4
 
-            if len(data) < pos + extension_length:
-                raise ValueError("RTP packet has truncated extension value")
-            extension_value = data[pos : pos + extension_length]
-            pos += extension_length
-            packet.extensions = extensions_map.get(extension_profile, extension_value)
+    #         if len(data) < pos + extension_length:
+    #             raise ValueError("RTP packet has truncated extension value")
+    #         extension_value = data[pos : pos + extension_length]
+    #         pos += extension_length
+    #         packet.extensions = extensions_map.get(extension_profile, extension_value)
 
-        if padding:
-            padding_len = data[-1]
-            if not padding_len or padding_len > len(data) - pos:
-                raise ValueError("RTP packet padding length is invalid")
-            packet.padding_size = padding_len
-            packet.payload = data[pos:-padding_len]
-        else:
-            packet.payload = data[pos:]
-        packet.payload_size=len(packet.payload)
+    #     if padding:
+    #         padding_len = data[-1]
+    #         if not padding_len or padding_len > len(data) - pos:
+    #             raise ValueError("RTP packet padding length is invalid")
+    #         packet.padding_size = padding_len
+    #         packet.payload = data[pos:-padding_len]
+    #     else:
+    #         packet.payload = data[pos:]
+    #     packet.payload_size=len(packet.payload)
 
-        return packet
+    #     return packet
 
-    def serialize(self, extensions_map=HeaderExtensionsMap()) -> bytes:
-        extension_profile, extension_value = extensions_map.set(self.extensions)
-        has_extension = bool(extension_value)
-
-        padding = self.padding_size > 0
-        data = pack(
-            "!BBHLL",
-            (self.version << 6)
-            | (padding << 5)
-            | (has_extension << 4)
-            | len(self.csrc),
-            (self.marker << 7) | self.payload_type,
-            self.sequence_number,
-            self.timestamp,
-            self.ssrc,
-        )
-        for csrc in self.csrc:
-            data += pack("!L", csrc)
-        if has_extension:
-            data += pack("!HH", extension_profile, len(extension_value) >> 2)
-            data += extension_value
-        data += self.payload
-        if padding:
-            data += os.urandom(self.padding_size - 1)
-            data += bytes([self.padding_size])
-        return data
-
-
-def unwrap_rtx(rtx: RtpPacket, payload_type: int, ssrc: int) -> RtpPacket:
-    """
-    Recover initial packet from a retransmission packet.
-    """
-    packet = RtpPacket(
-        payload_type=payload_type,
-        marker=rtx.marker,
-        sequence_number=unpack("!H", rtx.payload[0:2])[0],
-        timestamp=rtx.timestamp,
-        ssrc=ssrc,
-        payload=rtx.payload[2:],
-    )
-    packet.csrc = rtx.csrc
-    packet.extensions = rtx.extensions
-    return packet
+    # def serialize(self, extensions_map=HeaderExtensionsMap()) -> bytes:
+    #     extension_profile, extension_value = extensions_map.set(self.extensions)
+    #     has_extension = bool(extension_value)
+    #     self.header_size=len(extension_value)
+    #     padding = self.padding_size > 0
+    #     data = pack(
+    #         "!BBHLL",
+    #         (self.version << 6)
+    #         | (padding << 5)
+    #         | (has_extension << 4)
+    #         | len(self.csrc),
+    #         (self.marker << 7) | self.payload_type,
+    #         self.sequence_number,
+    #         self.timestamp,
+    #         self.ssrc,
+    #     )
+    #     for csrc in self.csrc:
+    #         data += pack("!L", csrc)
+    #     if has_extension:
+    #         data += pack("!HH", extension_profile, len(extension_value) >> 2)
+    #         data += extension_value
+    #     data += self.payload
+    #     if padding:
+    #         data += os.urandom(self.padding_size - 1)
+    #         data += bytes([self.padding_size])
+    #     return data
 
 
-def wrap_rtx(
-    packet: RtpPacket, payload_type: int, sequence_number: int, ssrc: int
-) -> RtpPacket:
-    """
-    Create a retransmission packet from a lost packet.
-    """
-    rtx = RtpPacketToSend(
-        payload_type=payload_type,
-        sequence_number=sequence_number,
-        timestamp=packet.timestamp,
-        ssrc=ssrc,
-        payload=pack("!H", packet.sequence_number) + packet.payload,
-    )
-    rtx.csrc = packet.csrc
-    rtx.extensions = packet.extensions
-    return rtx
+
+
+
 class RtpPacketMediaType(Enum):
     kAudio = auto()                    # Audio media packets.
     kVideo = auto()                    # Video media packets.
     kRetransmission = auto()           # Retransmissions, sent as response to NACK.
     kForwardErrorCorrection = auto()   # FEC packets.
     kPadding = auto()                  # RTX or plain padding sent to maintain BWE.
+#############################################################################################################
+#+-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+-+-+-+-+-
+#｜Version(2bit)｜P(1bit)|X(1bit)|  CC(4bit)  | marker(1bit) | payload type(7bit) |  sequence number(16bit)  |                                              
+#|is key frame(1bit)｜isFirstPkt(1bit) |                        packet type(6bit)                            |                                              
+#｜                                        timestamp(32bit)                                                  |
+#｜                                             ssrc(32bit)                                                  |
+#｜                                             csrc(32bit)                                                  |
+#|    extension_profile(16bit)     |                   len(extension_value)/4(16bit)                         |
+#|+-+-+—+-+-+—+-+-+—+           extension_value           +-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+|   
+#|+-+-+—+-+-+—+-+-+—+           payload                   +-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+|   
+#|+-+-+—+-+-+—+-+-+—+           padding                   +-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+|   
+#|+-+-+—+-+-+—+-+-+—+           padding size              +-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+-+—+-+|   
 
+ 
 class RtpPacketToSend(RtpPacket):
     def __init__(self, payload_type: int = 0, marker: int = 0, sequence_number: int = 0, timestamp: int = 0, ssrc: int = 0, payload: bytes = b"") -> None:
         super().__init__(payload_type, marker, sequence_number, timestamp, ssrc, payload)
@@ -841,7 +825,8 @@ class RtpPacketToSend(RtpPacket):
         return self._capture_time_ms
     def set_packet_type(self, packet_type: RtpPacketMediaType):
         self._packet_type = packet_type
- 
+    def packet_type(self)->RtpPacketMediaType:
+        return self._packet_type
     def set_retransmitted_sequence_number(self, sequence_number: int):
         self._retransmitted_sequence_number = sequence_number
 
@@ -887,3 +872,118 @@ class RtpPacketToSend(RtpPacket):
 
     def is_key_frame(self) -> bool:
         return self._is_key_frame
+    def serialize(self, extensions_map=HeaderExtensionsMap()) -> bytes:
+        extension_profile, extension_value = extensions_map.set(self.extensions)
+        has_extension = bool(extension_value)
+        self.header_size=len(extension_value)
+        padding = self.padding_size > 0
+        data = pack(
+            "!BBHBLL",
+            (self.version << 6)
+            | (padding << 5)
+            | (has_extension << 4)
+            | len(self.csrc),
+            (self.marker << 7) | self.payload_type,
+            self.sequence_number,
+            (self._is_key_frame<<7)|(self._is_first_packet_of_frame<<6)|self._packet_type.value,
+            self.timestamp,
+            self.ssrc,
+        )
+        
+        for csrc in self.csrc:
+            data += pack("!L", csrc)
+        if has_extension:
+            data += pack("!HH", extension_profile, len(extension_value) >> 2)
+            data += extension_value
+        data += self.payload
+        if padding:
+            data += os.urandom(self.padding_size - 1)
+            data += bytes([self.padding_size])
+        return data
+    @classmethod
+    def parse(cls, data: bytes, extensions_map=HeaderExtensionsMap()):
+        if len(data) < RTP_HEADER_LENGTH:
+            raise ValueError(
+                f"RTP packet length is less than {RTP_HEADER_LENGTH} bytes"
+            )
+
+        v_p_x_cc, m_pt, sequence_number,key_first_type,timestamp, ssrc = unpack("!BBHBLL", data[0:13])
+        version = v_p_x_cc >> 6
+        padding = (v_p_x_cc >> 5) & 1
+        extension = (v_p_x_cc >> 4) & 1
+        cc = v_p_x_cc & 0x0F
+        if version != 2:
+            raise ValueError("RTP packet has invalid version")
+        if len(data) < RTP_HEADER_LENGTH + 4 * cc:
+            raise ValueError("RTP packet has truncated CSRC")
+
+        packet = cls(
+            marker=(m_pt >> 7),
+            payload_type=(m_pt & 0x7F),
+            sequence_number=sequence_number,
+            timestamp=timestamp,
+            ssrc=ssrc,
+        )
+        packet.set_is_key_frame(key_first_type>>7)
+        packet.set_first_packet_of_frame((key_first_type>>6)&1)
+        packet.set_packet_type(key_first_type & 0x3F)
+        pos = RTP_HEADER_LENGTH
+        for i in range(0, cc):
+            packet.csrc.append(unpack_from("!L", data, pos)[0])
+            pos += 4
+
+        if extension:
+            if len(data) < pos + 4:
+                raise ValueError("RTP packet has truncated extension profile / length")
+            extension_profile, extension_length = unpack_from("!HH", data, pos)
+            extension_length *= 4
+            pos += 4
+
+            if len(data) < pos + extension_length:
+                raise ValueError("RTP packet has truncated extension value")
+            extension_value = data[pos : pos + extension_length]
+            pos += extension_length
+            packet.extensions = extensions_map.get(extension_profile, extension_value)
+            packet.header_size=extension_length
+        if padding:
+            padding_len = data[-1]
+            if not padding_len or padding_len > len(data) - pos:
+                raise ValueError("RTP packet padding length is invalid")
+            packet.padding_size = padding_len
+            packet.payload = data[pos:-padding_len]
+        else:
+            packet.payload = data[pos:]
+        packet.payload_size=len(packet.payload)
+
+        return packet
+def unwrap_rtx(rtx: RtpPacketToSend, payload_type: int, ssrc: int) -> RtpPacketToSend:
+    """
+    Recover initial packet from a retransmission packet.
+    """
+    packet = RtpPacketToSend(
+        payload_type=payload_type,
+        marker=rtx.marker,
+        sequence_number=unpack("!H", rtx.payload[0:2])[0],
+        timestamp=rtx.timestamp,
+        ssrc=ssrc,
+        payload=rtx.payload[2:],
+    )
+    packet.csrc = rtx.csrc
+    packet.extensions = rtx.extensions
+    return packet
+def wrap_rtx(
+    packet: RtpPacketToSend, payload_type: int, sequence_number: int, ssrc: int
+) -> RtpPacketToSend:
+    """
+    Create a retransmission packet from a lost packet.
+    """
+    rtx = RtpPacketToSend(
+        payload_type=payload_type,
+        sequence_number=sequence_number,
+        timestamp=packet.timestamp,
+        ssrc=ssrc,
+        payload=pack("!H", packet.sequence_number) + packet.payload,
+    )
+    rtx.csrc = packet.csrc
+    rtx.extensions = packet.extensions
+    return rtx

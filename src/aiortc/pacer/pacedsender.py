@@ -3,9 +3,13 @@ from enum import Enum,auto
 from typing import Optional, List,Callable
 from dataclasses import dataclass
 from .roundrobinpacketqueue import RoundRobinPacketQueue
+from .processthread import Module,ProcessThreadImpl
 from ..rtp import RtpPacketToSend,RtpPacketMediaType
+from ..rtcdtlstransport import RTCDtlsTransport
 import logging
 import math
+import datetime
+from .. import clock, rtp
 from datetime import timedelta
 from ..import clock
 from .intervalbudget import IntervalBudget
@@ -14,8 +18,8 @@ logger = logging.getLogger(__name__)
 """
 Pacer模块: 规定了报文的优先级，报文类型，Pacer调度模式
 """
-kDefaultMinPacketLimit=timedelta(milliseconds=5)
-kCongestedPacketInterval = timedelta(milliseconds=500)
+kDefaultMinPacketLimit=timedelta(milliseconds=5) #周期调度间隔5ms
+kCongestedPacketInterval = timedelta(milliseconds=500) # 500ms=0.5s
 kMaxDebtInTime=timedelta(milliseconds=500)
 kMaxElapsedTime = timedelta(seconds=2)
 kMaxProcessingInterval=timedelta(seconds=30)
@@ -25,12 +29,11 @@ kDefaultPaceMultiplier=2.5
 kPausedProcessInterval =kCongestedPacketInterval
 kMinSleepTime=timedelta(milliseconds=1)
 kMaxQueueLengthMs=2000
-
 class ProcessMode(Enum):
         kDynamic = "kDynamic"
         kPeriodic = "kPeriodic"
 
-def get_priority_for_type(packet_type):
+def get_priority_for_type(packet_type)->int:
     # Lower number takes priority over higher.
     k_first_priority = 0
     if packet_type == RtpPacketMediaType.kAudio: # 音频第一优先级
@@ -52,13 +55,18 @@ def get_priority_for_type(packet_type):
         # Handle unknown packet type or provide a default priority.
         return k_first_priority
 
-class PacedSender:
-    def __init__(self):
+class PacedSender(Module):
+    def __init__(self,transport:RTCDtlsTransport,rtp_header_extensions_map:rtp.HeaderExtensionsMap):
         self.process_mode_ :ProcessMode= ProcessMode.kPeriodic  # 假设有一个名为 PacingController 的类，并有一个 ProcessMode 枚举
         self.critsect_ = Lock()  # Python 中的锁对象
-        self.pacing_controller_ = PacingController(self,self.process_mode_)  # 假设有一个名为 PacingController 的类
-        self.process_thread_ :Optional[threading.Thread] 
-        
+        self.pacing_controller_ = PacingController(self,self.process_mode_,rtp_header_extensions_map)  # 假设有一个名为 PacingController 的类
+        self.process_thread_ :ProcessThreadImpl =ProcessThreadImpl("PaceSending")
+        # 注册线程回调函数
+        self.module_proxy:ModuleProxy=ModuleProxy(self)
+        self.process_thread_.start()
+        self.process_thread_.register_module(self.module_proxy)
+        self.transport=transport
+        self.rtp_header_extensions_map = rtp_header_extensions_map
     # 1. 输入报文：将报文交给PacingController.enqueue_packet处理
     def enqueue_packets(self, packets:List[RtpPacketToSend]):
         with self.critsect_:
@@ -69,13 +77,14 @@ class PacedSender:
         with self.critsect_:
             self.pacing_controller_.pause()
         if self.process_thread_:
-            self.process_thread_.stop()
-            self.process_thread_.start()
+            # self.process_thread_.stop()
+            # self.process_thread_.start()
+            self.process_thread_.wake_up(self.module_proxy)
     def resume(self):
         with self.critsect_:
             self.pacing_controller_.resume()
         if self.process_thread_:
-            self.process_thread_.wakeup()
+            self.process_thread_.wake_up(self.module_proxy)
     def set_congestion_window(self,congestion_window_size:int):
         with self.critsect_:
             self.pacing_controller_.set_congestion_window(congestion_window_size)
@@ -103,21 +112,39 @@ class PacedSender:
     def expected_queue_time(self):
         with self.critsect_:
             return self.pacing_controller_.expected_queue_time()
-    def time_until_next_process(self):
+    # 回调函数：获取下一次发送需要等待的时间间隔
+    def time_until_next_process(self)->datetime.timedelta:
         with self.critsect_:
             next_send_time=self.pacing_controller_.next_send_time()
-            sleep_time=max(0,next_send_time - clock.CurrentTime())
+            sleep_time=max(0,next_send_time - clock.current_datetime())
             return sleep_time#ms
-    def process(self):
+    # 线程回调函数process
+    async def process(self)->None:
         with self.critsect_:
-            self.pacing_controller_.process_packets()
+            await self.pacing_controller_.process_packets()
+    # 线程回调函数
     def process_thread_attached(self,process_thread:threading.Thread):
         logging.info(f"ProcessThreadAttached {hex(id(process_thread))}")
         assert not process_thread or process_thread == self.process_thread_
-    def send_rtp_packet(self,packet:RtpPacketToSend):
+    # 线程回调函数
+    def time_until_next_process(self)->datetime.timedelta:
+        with self.critsect_:
+            next_send_time = self.pacing_controller_.next_send_time()# 获取下一次发送时间
+            sleep_time = max(timedelta(0), next_send_time - clock.current_datetime())
+            # if self.process_mode_ == ProcessMode.kDynamic:
+            #     return max(sleep_time, PacingController.kMinSleepTime).total_seconds() * 1000
+            # return sleep_time.total_seconds() * 1000 #ms
+            return sleep_time
+    # 将获取的数据包通过网络发送出去
+    async def send_rtp_packet(self,packet_bytes:bytes):
+        await self.transport._send_rtp(packet_bytes)
         return 
-    def generate_padding(self):
-        return 
+    #生成指定size的padding包，可能包含多个报文
+    def generate_padding(self,size:int)->List[RtpPacketToSend]:
+        padding_packets=["fwdfwgr"]
+        # GeneratePadding()
+        return padding_packets
+    # 设置排队延迟限制
     def set_queue_time_limit(self,limit:timedelta):
         with self.critsect_:
             self.pacing_controller_.set_queue_time_limit(limit)
@@ -129,18 +156,20 @@ class PacedSender:
         #     self.process_thread_.wake_up(module_proxy=self.module_proxy_)
         return
     def __del__(self):
+        # 销毁线程
         if self.process_thread_:
-            self.process_thread_.put(None)
-            self.process_thread_.join()
-            self.process_thread_ = None
+            # self.process_thread_.stop()
+            # self.process_thread_.join()
+            # self.process_thread_ = None
+            self.process_thread_.register_module(self.module_proxy)
 class PacingController:
-    def __init__(self, packet_sender:PacedSender, mode:ProcessMode):
+    def __init__(self, packet_sender:PacedSender, mode:ProcessMode,rtp_header_extensions_map:rtp.HeaderExtensionsMap):
         self._mode:ProcessMode = mode
         self._packet_sender:PacedSender = packet_sender
         self._padding_target_duration:int = self._get_dynamic_padding_target()
         self._min_packet_limit:int = kDefaultMinPacketLimit
         self._transport_overhead_per_packet:int = 0
-        self._last_timestamp:int = clock.current_ms()
+        self._last_timestamp:datetime.datetime = clock.current_datetime()
         self._paused:bool= False
         self._media_budget:IntervalBudget =  IntervalBudget(0,False) # 周期调度模式中媒体数据的budget
         self._padding_budget:IntervalBudget = IntervalBudget(0,False)# 周期调度模式中padding数据的budget
@@ -149,31 +178,33 @@ class PacingController:
         self._media_rate:int = 0
         self._padding_rate:int = 0
         self._pacing_bitrate:int = 0
-        self._last_process_time:int = clock.current_ms()
+        self._last_process_time:datetime.datetime = clock.current_datetime()
         self._last_send_time:int = self._last_process_time
-        self._congestion_window_size:int = (float('inf'))
+        self._congestion_window_size:int = (float('inf')) # 拥塞窗口的大小
         self._outstanding_data:int= 0
-        self._queue_time_limit:int = kMaxExpectedQueueLength
+        self._queue_time_limit:timedelta = kMaxExpectedQueueLength
         self._account_for_audio:bool = False
         self._include_overhead:bool = False
         self._packet_queue:RoundRobinPacketQueue = RoundRobinPacketQueue(self._last_process_time)  # 报文队列
         self._packet_counter:int = 0 # 报文数量
+        self._drain_large_queues:bool=True # 开启排空
+        self._rtp_header_extensions_map=rtp_header_extensions_map
         # logging
-        self.__log_debug: Callable[..., None] = lambda *args: None
-        if logger.isEnabledFor(logging.DEBUG):
-            self.__log_debug = lambda msg, *args: logger.debug(
-                f"RTCRtpReceiver(%s) {msg}", self.__kind, *args
-            )
+        # self.__log_debug: Callable[..., None] = lambda *args: None
+        # if logger.isEnabledFor(logging.DEBUG):
+        #     self.__log_debug = lambda msg, *args: logger.debug(
+        #         f"RTCRtpReceiver(%s) {msg}",  *args
+        #     )
     def pause(self):
         if not self._paused:
-            self.__log_debug("PacedSender paused.")
+            logger.debug("PacedSender paused.")
         self._paused = True
-        self._packet_queue.set_pause_state(True, self.clock.CurrentTime())
+        self._packet_queue.set_pause_state(True, self.current_time())
     def resume(self):
         if self._paused:
-            self.__log_debug("PacedSender resumed.")
+            logger.debug("PacedSender resumed.")
         self._paused = False
-        self._packet_queue.set_pause_state(False, self.clock.CurrentTime())
+        self._packet_queue.set_pause_state(False, self.current_time())
     def is_paused(self)->bool:
         return self._paused
     def _get_dynamic_padding_target(self):
@@ -188,22 +219,23 @@ class PacingController:
         was_congested = self.congested()
         self._congestion_window_size = congestion_window_size
         if was_congested and not self.congested():
-            elapsed_time = self._update_time_and_get_elapsed(self.clock.CurrentTime())
+            elapsed_time = self.update_time_and_get_elapsed(self.current_time())
             self.update_budget_with_elapsed_time(elapsed_time)
+    # 判断是否拥塞
     def congested(self)->bool:
-        if math.ifinite(self._congestion_window_size):
+        if math.isinf(self._congestion_window_size):
             return self._outstanding_data>=self._congestion_window_size
         return False
     def update_outstanding_data(self, outstanding_data)->None:
         was_congested=self.congested()
         self._outstanding_data=outstanding_data
         if was_congested and not self.congested:
-            elapsed_time=self._update_time_and_get_elapsed(self.current_time())
+            elapsed_time=self.update_time_and_get_elapsed(self.current_time())
             self.update_budget_with_elapsed_time(elapsed_time)
-    def current_time(self)->int:
-        time=clock.current_ms()
+    def current_time(self)->datetime.datetime:
+        time=clock.current_datetime()
         if time<self._last_timestamp:
-            self.__log_debug( "Non-monotonic clock behavior observed. Previous timestamp: %d , new timestamp: %d",self._last_timestamp_.ms(),time.ms())
+            logger.debug( "Non-monotonic clock behavior observed. ")
             time=self._last_timestamp
         self._last_timestamp=time
         return time
@@ -212,10 +244,11 @@ class PacingController:
         self._padding_rate=padding_rate #kbps
         self._pacing_bitrate=pacing_rate #kbps
         self._padding_budget.set_target_rate_kbps(padding_rate)#bps to kbps
-        logging.info( "bwe:pacer_updated pacing_kbps= %d , padding_budget_kbps= %d ",self._pacing_bitrate,self._padding_rate)
+        logging.info( "BWE: pacer_updated pacing_kbps= %d , padding_budget_kbps= %d ",self._pacing_bitrate,self._padding_rate)
     def expected_queue_time(self)->int:
-        assert self.pacing_bitrate > 0, "Pacing bitrate must be greater than zero."
-        return timedelta(milliseconds=(self.queue_size_data()*8*1000)/self._pacing_bitrate)
+        assert self._pacing_bitrate > 0, "Pacing bitrate must be greater than zero."
+        time=timedelta(milliseconds=(self.queue_size_data()*8*1000)/self._pacing_bitrate)
+        return time
 
     def queue_size_packets(self)->int:
         return self._packet_queue.size_in_packets()
@@ -244,34 +277,37 @@ class PacingController:
             return 0
         return self.current_time()-oldest_packet
 
-    def update_time_and_get_elapsed(self, now:int)->int:
-        if self._last_process_time.is_minus_infinity():
-            return 0
+    def update_time_and_get_elapsed(self, now:datetime.datetime)->datetime.datetime:
+        # if self._last_process_time.is_minus_infinity():
+        #     return 0
         assert now >= self._last_process_time
         elapsed_time = now - self._last_process_time
         self._last_process_time_ = now
         if elapsed_time>kMaxElapsedTime:
             elapsed_time = kMaxElapsedTime
         return elapsed_time
-    def set_queue_time_limit(self,limit:int)->None:
+    def set_queue_time_limit(self,limit:timedelta)->None:
         self._queue_time_limit=limit
-    def next_send_time(self)->int:
+    # 获取下一次pacer发送时间
+    def next_send_time(self)->datetime.datetime:
         now=self.current_time()
-        if self._paused:
+        if self._paused: # 1. 暂停500ms
+            # return int((self._last_send_time+kPausedProcessInterval).total_seconds() * 1000)
             return self._last_send_time+kPausedProcessInterval
-        if self._mode==ProcessMode.kPeriodic:
+        if self._mode==ProcessMode.kPeriodic: # 2. 周期调度，间隔5000us=5ms
+            # return int((self._last_process_time+self._min_packet_limit).total_seconds() * 1000)
             return self._last_process_time+self._min_packet_limit
-        audio_enqueue_time=self._packet_queue.leading_audio_packet_enqueue_time()
-        if audio_enqueue_time.has_value():
-            return audio_enqueue_time
-        if self.congested() or self._packet_counter==0:
-            return self._last_send_time+kCongestedPacketInterval
-        if self._media_rate>0 and not self._packet_queue.empty():
-            return min(self._last_send_time+kPausedProcessInterval,self._last_process_time+self._media_debt/self._media_rate)
-        if self._padding_rate>0 and self._packet_queue.empty():
-            drain_time=max(self.media_debt/self._media_rate,self.padding_debt/self._padding_rate)
-            return min(self._last_send_time+kPausedProcessInterval,self._last_process_time+drain_time)
-        return self._last_process_time+kPausedProcessInterval
+        # audio_enqueue_time=self._packet_queue.leading_audio_packet_enqueue_time()
+        # if audio_enqueue_time.has_value():
+        #     return audio_enqueue_time
+        # if self.congested() or self._packet_counter==0:
+        #     return self._last_send_time+kCongestedPacketInterval
+        # if self._media_rate>0 and not self._packet_queue.empty():
+        #     return min(self._last_send_time+kPausedProcessInterval,self._last_process_time+self._media_debt/self._media_rate)
+        # if self._padding_rate>0 and self._packet_queue.empty():
+        #     drain_time=max(self.media_debt/self._media_rate,self.padding_debt/self._padding_rate)
+        #     return min(self._last_send_time+kPausedProcessInterval,self._last_process_time+drain_time)
+        # return self._last_process_time+kPausedProcessInterval
     def padding_to_add(self,recommended_probe_size:int,data_sent:int)->int:
         if not self._packet_queue.empty():
             return 0
@@ -288,21 +324,23 @@ class PacingController:
         elif self._padding_rate>0 and self._padding_debt==0:
             return self._padding_target_duration*self._padding_rate
         return 0
+    # 获取本次发送需要发送的报文
     def get_pending_packet(self,target_send_time:int,now:int)->RtpPacketToSend:
         if self._packet_queue.empty():
             return None
-        unpaced_audio_packet=self._packet_queue.leading_audio_packet_enqueue_time().has_value()
-        if not unpaced_audio_packet:
-            if self.congested():
+        # unpaced_audio_packet=self._packet_queue.leading_audio_packet_enqueue_time().has_value()
+        # if not unpaced_audio_packet:
+        if self.congested():
+            return None
+        # 周期调度
+        if self._mode==ProcessMode.kPeriodic:
+            if self._media_budget.bytes_remaining()<=0:
                 return None
-            if self._mode==ProcessMode.kPeriodic:
-                if self._media_budget.bytes_remaining()<=0:
+        else:
+            if now<=target_send_time:
+                flush_time=self._media_debt/self._media_rate
+                if now+flush_time>target_send_time:
                     return None
-            else:
-                if now<=target_send_time:
-                    flush_time=self._media_debt/self._media_rate
-                    if now+flush_time>target_send_time:
-                        return None
         return self._packet_queue.pop()
     def on_packet_sent(self,packet_type:RtpPacketMediaType,packet_size:int,send_time:int)->None:
         audio_packet=packet_type==RtpPacketMediaType.kAudio
@@ -318,21 +356,32 @@ class PacingController:
     def update_budget_with_elapsed_time(self,delta:int)->None:
         if self._mode==ProcessMode.kPeriodic:
             delta=min(kMaxProcessingInterval,delta)
-            self._media_budget.increase_budget(delta)
-            self._padding_budget.increase_budget(delta)
+            self._media_budget.increase_budget(delta.total_seconds()*1000) 
+            self._padding_budget.increase_budget(delta.total_seconds()*1000)
+            logger.info("Pacer Queue | Update Media_budget: target_rate_kbps:{0}, bytes_remaining:{1}".format(self._media_budget._target_rate_kbps,self._media_budget._bytes_remaining))
+            logger.info("Pacer Queue | Update Padding_budget: target_rate_kbps:{0}, bytes_remaining:{1}".format(self._padding_budget._target_rate_kbps,self._padding_budget._bytes_remaining))
         else:
-            self._media_debt-=min(self._media_debt,self._media_rate*delta)
-            self._padding_debt-=min(self.padding_debt,self._padding_rate*delta)
+            self._media_debt-=min(self._media_debt,self._media_rate*delta.total_seconds()*1000)
+            self._padding_debt-=min(self.padding_debt,self._padding_rate*delta.total_seconds()*1000)
+            logger.info("Pacer Queue | Update Media_debt: {0}".format(self._media_debt))
+            logger.info("Pacer Queue | Update Padding_debt: {0}".format(self._padding_debt))
+        
     def update_budget_with_sent_data(self,size:int)->None:
         self._outstanding_data+=size
         if self._mode==ProcessMode.kPeriodic:
             self._media_budget.use_budget(size)
             self._padding_budget.use_budget(size)
+            logger.info("Pacer Queue | Update Media_budget: target_rate_kbps:{0}, bytes_remaining:{1}".format(self._media_budget._target_rate_kbps,self._media_budget._bytes_remaining))
+            logger.info("Pacer Queue | Update Padding_budget: target_rate_kbps:{0}, bytes_remaining:{1}".format(self._padding_budget._target_rate_kbps,self._padding_budget._bytes_remaining))
         else:
             self._media_debt+=size
             self._media_debt=min(self._media_debt,self._media_rate*kMaxDebtInTime)
             self._padding_debt+=size
             self._padding_debt=min(self._padding_debt,self._padding_rate* kMaxDebtInTime)
+            logger.info("Pacer Queue | Update Media_debt: {0}".format(self._media_debt))
+            logger.info("Pacer Queue | Update Padding_debt: {0}".format(self._padding_debt))
+        
+        
     # 报文输入：决策优先级并插入queue
     def enqueue_packet(self, packet:RtpPacketToSend):
         assert self._pacing_bitrate > 0, "SetPacingRate must be called before InsertPacket."
@@ -349,15 +398,15 @@ class PacingController:
             packet.set_capture_time_ms(now.ms())
         self._packet_queue.push(priority, now, self._packet_counter, packet)
         self._packet_counter += 1
-    def should_send_keepalive(self,now:int)->bool:
+    def should_send_keepalive(self,now:datetime.datetime)->bool:
         if self._paused or self.congested() or self._packet_counter==0:
             elapsed_since_last_send=now-self._last_send_time
             if elapsed_since_last_send>=kCongestedPacketInterval:
                 return True
         return False
     # Pacer核心逻辑：周期调度queue中的报文，budget足够的时候从queue中取出报文发送,删除了动态调度的处理部分
-    def process_packets(self)->None:
-        now=currenttime()
+    async def process_packets(self)->None:
+        now=self.current_time()
         target_send_time=now
         previous_process_time=self._last_process_time
         # 距离上次处理的时间，限制不超过2s
@@ -376,42 +425,53 @@ class PacingController:
         if self._paused:
             return 
         # 2. 如果开启了drain_large_queues,queue中的数据难以以当前速率在剩余时间内发送出去，则适当提高当前发送码率（通过修改budget）
-        if elapsed_time>0:
-            target_rate=self._pacing_bitrate
-            queue_size_data=self._packet_queue.size()
+        if elapsed_time.total_seconds()*1000>0:
+            target_rate=self._pacing_bitrate # pacer rate
+            queue_size_data=self._packet_queue.size() #pacer 队列的大小
             if queue_size_data>0:
-                self._packet_queue.update_queue_time()
-                if self._drain_large_queues:
-                    avg_time_left=max(timedelta(milliseconds=1),self._queue_time_limit-self._packet_queue.average_queuetime)
+                self._packet_queue.update_queue_time(now)
+                if self._drain_large_queues: # 是否开启排空
+                    avg_time_left=max(1,self._queue_time_limit.total_seconds()*1000-self._packet_queue.average_queuetime())
                     min_rate_need=queue_size_data/avg_time_left
                     if min_rate_need>target_rate:
                         target_rate=min_rate_need
-                        self.__log_debug ("bwe:large_pacing_queue pacing_rate_kbps=%d"
-                              ,target_rate.kbps())
+                        logger.debug ("bwe:large_pacing_queue pacing_rate_kbps=%d"
+                              ,target_rate)
             # 提高当前budget，用于尽快排空
             if self._mode==ProcessMode.kPeriodic:
-                self._media_budget.set_target_rate_kbps(target_rate.kbps())
+                self._media_budget.set_target_rate_kbps(target_rate) # 设置媒体报文预算
                 self.update_budget_with_elapsed_time(elapsed_time)
             else:
                 self._media_rate=target_rate
         data_sent=0
+        # 循环发送报文
         while (not self._paused):
             # 3. 获取需要发送的报文，需要检查是否拥塞，budget是否足够
-            rtp_packet=self.get_pending_packet(pacing_info,target_send_time,now)
+            rtp_packet=self.get_pending_packet(target_send_time,now)
             # 4. 当前无法发送媒体包，检查是否发送padding
             if rtp_packet==None:
                 # // No packet available to send, check if we should send padding.
                 break
             # 5. 封装发送报文，通过回调发送报文
+            packet_bytes = rtp_packet.serialize(self._rtp_header_extensions_map) #一个RTP packet
             packet_type=rtp_packet.packet_type()
-            packet_size=rtp_packet.payload_size()+rtp_packet.padding_size()
+            packet_size=rtp_packet.payload_size+rtp_packet.padding_size+rtp_packet.header_size
             if self._include_overhead:
-                packet_size+=rtp_packet.headers_size()+self._transport_overhead_per_packet
-            self._packet_sender.send_packet(rtp_packet,pacing_info)
-            data_send+=packet_size
+                packet_size+=rtp_packet.header_size+self._transport_overhead_per_packet
+            await self._packet_sender.send_rtp_packet(packet_bytes)
+            data_sent+=packet_size
             # 6. 发送完成后，更新一些统计以及budget
             self.on_packet_sent(packet_type,packet_size,target_send_time)
         self._last_process_time=max(self._last_process_time,previous_process_time)
         
             
-            
+class ModuleProxy(Module):
+    def __init__(self,delegate:PacedSender) -> None:
+        super().__init__()
+        self._delegate:ProcessThreadImpl=delegate
+    def time_until_next_process(self)->datetime.timedelta:
+        return self._delegate.time_until_next_process()
+    async def process(self):
+        return await self._delegate.process()
+    def process_thread_attached(self,process_thread:ProcessThreadImpl):
+        return self._delegate.process_thread_attached(process_thread)

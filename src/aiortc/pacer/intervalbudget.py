@@ -6,13 +6,13 @@ class IntervalBudget:
         self._bytes_remaining:int=0
         self._can_build_up_underuse:bool=can_build_up_underuse
         self.set_target_rate_kbps(initial_target_rate_kbps)
-    def set_target_rate_kbps(self,target_rate_kbps)->None:
+    def set_target_rate_kbps(self,target_rate_kbps:int)->None:
         self._target_rate_kbps=target_rate_kbps
-        self._max_bytes_in_budget=(kWindowMs*target_rate_kbps)/8
+        self._max_bytes_in_budget=(kWindowMs*target_rate_kbps)/8# 时间*速率=预算的最大数据字节数
         self._bytes_remaining=min(max(-self._max_bytes_in_budget,self._bytes_remaining),self._max_bytes_in_budget)
     def increase_budget(self,delta_time_ms:int)->None:
         bytes=self._target_rate_kbps*delta_time_ms/8
-        if self.bytes_remaining<0 or self._can_build_up_underuse:
+        if self.bytes_remaining()<0 or self._can_build_up_underuse:
             self._bytes_remaining=min(self._bytes_remaining+bytes,self._max_bytes_in_budget)
         else:
             self._bytes_remaining=min(bytes,self._max_bytes_in_budget)

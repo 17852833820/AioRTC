@@ -21,7 +21,7 @@ from . import clock, rtp
 from .rtcicetransport import RTCIceTransport
 from .rtcrtpparameters import RTCRtpReceiveParameters, RTCRtpSendParameters
 from .rtp import (AnyRtcpPacket, RtcpByePacket, RtcpPacket, RtcpPsfbPacket,
-                  RtcpRrPacket, RtcpRtpfbPacket, RtcpSrPacket, RtpPacket,
+                  RtcpRrPacket, RtcpRtpfbPacket, RtcpSrPacket, RtpPacket,RtpPacketToSend,
                   is_rtcp)
 from .stats import RTCStatsReport, RTCTransportStats
 
@@ -483,7 +483,7 @@ class RTCDtlsTransport(AsyncIOEventEmitter):
 
     async def _handle_rtp_data(self, data: bytes, arrival_time_ms: int,arrival_24NTP_time:int) -> None:
         try:
-            packet = RtpPacket.parse(data, self._rtp_header_extensions_map)
+            packet = RtpPacketToSend.parse(data, self._rtp_header_extensions_map)
         except ValueError as exc:
             self.__log_debug("x RTP parsing failed: %s", exc)
             return
@@ -539,7 +539,7 @@ class RTCDtlsTransport(AsyncIOEventEmitter):
                     data = self._rx_srtp.unprotect_rtcp(data)
                     await self._handle_rtcp_data(data)
                 else:
-                    data = self._rx_srtp.unprotect(data)
+                    # data = self._rx_srtp.unprotect(data)
                     await self._handle_rtp_data(data, arrival_time_ms=arrival_time_ms,arrival_24NTP_time=arrival_24NTP_time)
             except pylibsrtp.Error as exc:
                 self.__log_debug("x SRTP unprotect failed: %s", exc)
@@ -580,8 +580,8 @@ class RTCDtlsTransport(AsyncIOEventEmitter):
 
         if is_rtcp(data):
             data = self._tx_srtp.protect_rtcp(data)
-        else:
-            data = self._tx_srtp.protect(data)
+        # else:
+        #     data = self._tx_srtp.protect(data)
         await self.transport._send(data)
         self.__tx_bytes += len(data)
         self.__tx_packets += 1
