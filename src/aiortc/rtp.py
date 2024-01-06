@@ -692,9 +692,9 @@ class RtpPacket:
         self.csrc: List[int] = []
         self.extensions = HeaderExtensions()
         self.payload = payload
-        self.padding_size = 0
-        self.payload_size = 0
-        self.header_size=0
+        self.padding_size = 0# Byte
+        self.payload_size = len(self.payload) # Byte
+        self.header_size=0# Byte
 
     def __repr__(self) -> str:
         return (

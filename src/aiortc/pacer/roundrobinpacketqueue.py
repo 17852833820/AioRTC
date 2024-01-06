@@ -13,6 +13,7 @@ from ..rtp import RtpPacketToSend,RtpPacketMediaType
 kMaxLeadingSize=1400 #Byte
 from collections import defaultdict
 import logging
+from .. import clock
 logger = logging.getLogger(__name__)
 # 每一路流有一个优先级队列
 class Stream:
@@ -114,7 +115,7 @@ class RoundRobinPacketQueue:
         self._paused:bool=False
         self._size_packets:int=0 # 报文总数量
         self._max_size:int=kMaxLeadingSize #最大报文数量
-        self._size:int=0 #报文总字节数
+        self._size:int=0 #报文总字节数，单位# Byte
         self._queue_time_sum:timedelta=timedelta(milliseconds=0)
         self._pause_time_sum: timedelta=timedelta(milliseconds=0)#队列被暂停的总时间
         self._stream:Stream = None
@@ -154,7 +155,7 @@ class RoundRobinPacketQueue:
             # 如果_single_packet_queue有数据，先push到queue中
             # self.maybe_promote_single_packet_to_normal_queue()
             #调用push函数将本次要入队的报文插入到队列中
-            self._enqueue_times.append(enqueue_time)
+            self._enqueue_times.append(enqueue_time)# 入队时间
             self.push_pkt(QueuedPacket(
                 priority, enqueue_time, enqueue_order,
                 len(self._enqueue_times),
@@ -228,7 +229,10 @@ class RoundRobinPacketQueue:
         # else:
             # priority=self._stream.packet_queue.top().priority()
             # self._stream.priority_it=priority
-        logger.info("Pacer Queue | Pop Packet enqueue_time: {0},priority: {1},packet_type: {2},".format(queued_packet.enqueue_time(),queued_packet.priority(),rtp_packet.packet_type().name))
+        if rtp_packet.is_first_packet_of_frame():
+            outqueue_time=clock.current_datetime()
+            pacer_time=(outqueue_time-queued_packet.enqueue_time()).total_seconds()*1000 #ms
+            logger.info("Pacer Queue | Pop Packet enqueue_time: {0}, outqueue_time: {1}, pacer_time: {2} ms, priority: {3}, packet_type: {4},queue_packet: {5},queue_datasizeL {6}".format(queued_packet.enqueue_time(),outqueue_time,pacer_time,queued_packet.priority(),rtp_packet.packet_type().name,self._size_packets,self._size))
         return rtp_packet
 
     # queue是否为空
@@ -243,7 +247,7 @@ class RoundRobinPacketQueue:
     def size_in_packets(self)->int:
         return self._size_packets
     # 报文总字节数
-    def size(self):
+    def size(self)->int:
         return self._size
     # 队列中最旧的报文时间戳
     def oldest_queuetime(self):
@@ -253,7 +257,7 @@ class RoundRobinPacketQueue:
            return datetime.min
        assert not len(self._enqueue_times)==0
        return min(self._enqueue_times)
-    #队列中的报文按照当前码率发送出去所用到的时间 
+    #队列中的报文按照当前码率发送出去所用到的平均时间 ms
     def average_queuetime(self)->int: #ms
         if self.empty():
             return 0

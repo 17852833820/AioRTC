@@ -290,7 +290,7 @@ class RTCRtpSender():
                     if self.__encoder and hasattr(self.__encoder, "target_bitrate"):
                         self.__encoder.target_bitrate = bitrate
                     # 更新pacer速率
-                    pacing_rate=(2.5*bitrate)/1024
+                    pacing_rate=(1.0*bitrate)/1024
                     self.pace_sender.set_pacing_rates(pacing_rate,0)# kbps
                     self.__log_debug(
                         "BWE | receiver estimated maximum bitrate Target bitrate:%d bps,encode bitrate:%d,pacing bitrate:%d", bitrate,self.__encoder.target_bitrate,pacing_rate
@@ -409,7 +409,6 @@ class RTCRtpSender():
                 enc_frame, enc_dur ,frame_type,frame_size= await self._next_encoded_frame(codec) #返回了一帧图像编码后产生的数据：编码打包后的packet列表和时间戳，enc_dur为编码一张图像花费的时间
                 # 对于正常P帧编码的stream，正常传输直到编码器停止返回None
                 timestamp = uint32_add(timestamp_origin, enc_frame.timestamp)
-                self.__log_debug('[FRAME_INFO] Stream id : 1, Number: %d, PTS: %d, enc_dur: %d Type: %s, size: %d', frame_number,timestamp, enc_dur,frame_type.name,frame_size)
                 # 遍历每个packet并为其创建一个RTP数据包
                 packets=[]
                 for i, payload in enumerate(enc_frame.payloads):
@@ -425,6 +424,9 @@ class RTCRtpSender():
                         payload_type=codec.payloadType,
                         sequence_number=sequence_number,
                         timestamp=timestamp,
+                        payload=payload,
+                        ssrc=self._ssrc,
+                        marker = (i == len(enc_frame.payloads) - 1) and 1 or 0 # 最后一个包
                     )
                     packet.set_packet_type(RtpPacketMediaType.kVideo)
                     packet.set_allow_retransmission(True)
@@ -434,9 +436,9 @@ class RTCRtpSender():
                     else:
                         packet.set_is_key_frame(False)
                     #===============================================================================================
-                    packet.ssrc = self._ssrc
-                    packet.payload = payload
-                    packet.marker = (i == len(enc_frame.payloads) - 1) and 1 or 0 #用于指示当前数据包是否是一个帧（frame）的最后一个数据包
+                    # packet.ssrc = self._ssrc
+                    # packet.payload = payload
+                    # packet.marker = (i == len(enc_frame.payloads) - 1) and 1 or 0 #用于指示当前数据包是否是一个帧（frame）的最后一个数据包
                     # set header extensions 添加头部扩展
                     packet.extensions.abs_send_time = ( #RTP包的发送时间：获取当前的NTP时间戳，将64位的 NTP timestamps转圜为24位
                         clock.current_ntp_time() >> 14
@@ -469,6 +471,8 @@ class RTCRtpSender():
                     sequence_number = uint16_add(sequence_number, 1)
                 #=======================================Version 2===============================================
                 self.pace_sender.enqueue_packets(packets)
+                queue_time=self.pace_sender.expected_queue_time()
+                self.__log_debug('[FRAME_INFO] Stream id : 1, Number: %d, PTS: %d, enc_dur: %d Type: %s, size: %d, queue_time: %d ms', frame_number,timestamp, enc_dur,frame_type.name,frame_size,queue_time.total_seconds()*1000)
                 #===============================================================================================
                 # 计算发送速率
                 if self.timestamp-self.last_timestamp>1000:
@@ -508,6 +512,8 @@ class RTCRtpSender():
                 
                 # 编码下一帧
                 self._data = await self.__track.recv()
+                queue_time=self.pace_sender.expected_queue_time()
+                # self.__log_debug('[FRAME_INFO] Number: %d, PTS: %d, queue_time: %d ms', frame_number,timestamp, queue_time.total_seconds()*1000)
                 if self._data.index%10==0 and self._data.index>=10:
                         self.encode_mode.transition()#转换到S1:出现关键帧
                         self.encode_role_forwart=not self.encode_role_forwart
@@ -521,7 +527,7 @@ class RTCRtpSender():
                 if  (self.encode_role_forwart and self.encode_mode.current_state!="S3") or (not self.encode_role_forwart and self.encode_mode.current_state!="S2"):
                     enc_frame, enc_dur ,frame_type,frame_size= await self._next_encoded_frame(codec) #返回了一帧图像编码后产生的数据：编码打包后的packet列表和时间戳，enc_dur为编码一张图像花费的时间
                     timestamp = uint32_add(timestamp_origin, enc_frame.timestamp)
-                    self.__log_debug('[FRAME_INFO] Stream id : 1, Number: %d, PTS: %d, enc_dur: %d Type: %s, size: %d', frame_number,timestamp, enc_dur,frame_type.name,frame_size)
+                    self.__log_debug('[FRAME_INFO] Stream id : 1, Number: %d, PTS: %d, enc_dur: %d Type: %s, size: %d, queue_time: %d ms', frame_number,timestamp, enc_dur,frame_type.name,frame_size,queue_time.total_seconds()*1000)
                     # 遍历每个packet并为其创建一个RTP数据包
                     packets=[]
                     for i, payload in enumerate(enc_frame.payloads):
@@ -538,6 +544,9 @@ class RTCRtpSender():
                         payload_type=codec.payloadType,
                         sequence_number=sequence_number,
                         timestamp=timestamp,
+                        payload=payload,
+                        ssrc=self._ssrc,
+                        marker = (i == len(enc_frame.payloads) - 1) and 1 or 0 
                         )
                         
                         packet.set_packet_type(RtpPacketMediaType.kVideo)
@@ -549,10 +558,10 @@ class RTCRtpSender():
                             packet.set_is_key_frame(False)
                         #================================================================================================
 
-                        packet.ssrc = self._ssrc
-                        packet.payload = payload
-                        packet.payload_size=len(payload)
-                        packet.marker = (i == len(enc_frame.payloads) - 1) and 1 or 0 #用于指示当前数据包是否是一个帧（frame）的最后一个数据包
+                        # packet.ssrc = self._ssrc
+                        # packet.payload = payload
+                        # packet.payload_size=len(payload)
+                        # packet.marker = (i == len(enc_frame.payloads) - 1) and 1 or 0 #用于指示当前数据包是否是一个帧（frame）的最后一个数据包
                         # set header extensions 添加头部扩展
                         packet.extensions.abs_send_time = ( #RTP包的发送时间：获取当前的NTP时间戳，将64位的 NTP timestamps转圜为24位
                             clock.current_ntp_time() >> 14
@@ -591,7 +600,7 @@ class RTCRtpSender():
                 if  (self.encode_role_forwart and self.encode_mode.current_state!="S2") or (not self.encode_role_forwart and self.encode_mode.current_state!="S3" and self.encode_mode.current_state!="S0"):
                     enc_frame_two, enc_dur_two ,frame_type_two,frame_size_two= await self._next_encoded_frame_two(codec) #返回了一帧图像编码后产生的数据：编码打包后的packet列表和时间戳，enc_dur为编码一张图像花费的时间
                     timestamp = uint32_add(timestamp_origin, enc_frame_two.timestamp)
-                    self.__log_debug('[FRAME_INFO] Stream id : 2, Number: %d, PTS: %d, enc_dur: %d Type: %s, size: %d', frame_number,timestamp, enc_dur_two,frame_type_two.name,frame_size_two)
+                    self.__log_debug('[FRAME_INFO] Stream id : 2, Number: %d, PTS: %d, enc_dur: %d Type: %s, size: %d, queue_time: %d ms', frame_number,timestamp, enc_dur_two,frame_type_two.name,frame_size_two,queue_time.total_seconds()*1000)
                     packets=[]
                     for i, payload in enumerate(enc_frame_two.payloads):
                         #=======================================Version 1===============================================
@@ -605,6 +614,9 @@ class RTCRtpSender():
                         payload_type=codec.payloadType,
                         sequence_number=sequence_number,
                         timestamp=timestamp,
+                        payload=payload,
+                        ssrc=self._ssrc,
+                        marker = (i == len(enc_frame.payloads) - 1) and 1 or 0 
                         )
                         
                         packet.set_packet_type(RtpPacketMediaType.kVideo)
@@ -615,10 +627,10 @@ class RTCRtpSender():
                         else:
                             packet.set_is_key_frame(False)
                         #===============================================================================================
-                        packet.ssrc = self._ssrc
-                        packet.payload = payload
-                        packet.payload_size=len(payload)
-                        packet.marker = (i == len(enc_frame_two.payloads) - 1) and 1 or 0 #用于指示当前数据包是否是一个帧（frame）的最后一个数据包
+                        # packet.ssrc = self._ssrc
+                        # packet.payload = payload
+                        # packet.payload_size=len(payload)
+                        # packet.marker = (i == len(enc_frame_two.payloads) - 1) and 1 or 0 #用于指示当前数据包是否是一个帧（frame）的最后一个数据包
                         # set header extensions 添加头部扩展
                         packet.extensions.abs_send_time = ( #RTP包的发送时间：获取当前的NTP时间戳，将64位的 NTP timestamps转圜为24位
                             clock.current_ntp_time() >> 14

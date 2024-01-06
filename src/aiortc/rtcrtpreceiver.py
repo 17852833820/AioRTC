@@ -529,10 +529,10 @@ class RTCRtpReceiver:
         #     self.last_recv_time=current_24NTP_time #current ms
         #     self.__log_debug('[FRAME_INFO]  transport dur: %d ms', self.last_recv_time-self.first_send_time)
         # 计算frame 延迟：最后一个包的接收时间-第一个包的接收时间+rtt/2    
-        if  packet.marker: #
+        if  packet.marker: #最后一个包
             self.last_recv_time=arrival_time_ms
             self.__log_debug('[FRAME_INFO] T: %d ,  frame packet dur: %d ms',packet.timestamp,self.last_recv_time-self.first_recv_time)
-        if packet.extensions.marker_first:
+        if packet._is_first_packet_of_frame:# 第一个包
             self.first_recv_time=arrival_time_ms
            
         # keep track of sources

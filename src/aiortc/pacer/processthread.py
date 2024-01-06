@@ -85,7 +85,7 @@ class ProcessThreadImpl:
         # Main processing loop
         # now = int(time.time() * 1000)  # Current time in milliseconds
         now = clock.current_datetime()
-        next_checkpoint = now + timedelta(milliseconds=60)# 设置下一个检查点的时间
+        next_checkpoint = now + timedelta(milliseconds=60*1000)# 设置下一个检查点的时间
 
         with self.lock_:
             if self.stop_:
@@ -116,7 +116,7 @@ class ProcessThreadImpl:
             #     task = self.queue_.get()
             #     task.run()
 
-        time_to_wait = next_checkpoint - clock.current_datetime()
+        time_to_wait = next_checkpoint - clock.current_datetime() #ms
         if time_to_wait.total_seconds() * 1000 > 0:
             self.wake_up_.wait(time_to_wait.total_seconds() * 1000 )
 
