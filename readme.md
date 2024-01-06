@@ -499,4 +499,22 @@ baseline 编码：
 
 1. 在RtpSender中，发送数据包是通过self.transport._send_rtp()实现，发送的报文类型：（1）视频报文（2）音频报文 （3）重传报文 （4）RTCP控制报文
 2. 去除self.transport._send_rtp()直接发送的部分，待发送的数据包全部通过PacedSender.enqueue_packets（）进入优先级队列
-3. 
+### 实验测试
+#### 1. 加入Pacer模块后对baseline进行测试
+   配置：关闭排空，pacer rate*1.0
+   测试结果：
+   （1）端到端延迟分析
+     --Pacer delay：测量的是每帧图像第一个数据包在pacer队列中的排队延迟
+    ![](./res_picture/test1-5.png)
+     --Pacer remain bytes:pacer队列预算
+    ![](./res_picture/test1-4.png)
+     --Trans delay：测量的是每帧图像最后一个数据包的接收时间于第一个包的发送时间的时间差
+    ![Test1-1:端到端延迟分析](./res_picture/test1-1.png)
+     --RTT：往返延迟
+    ![](./res_picture/test1-2.png)
+   （2）速率分析
+   发送速率，接受速率，目标比特率
+    ![](./res_picture/test1-6.png)
+    （3）帧大小
+    ![](./res_picture/test1-3.png)
+  

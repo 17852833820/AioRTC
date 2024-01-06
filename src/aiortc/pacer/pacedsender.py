@@ -194,7 +194,7 @@ class PacingController:
         self._include_overhead:bool = False
         self._packet_queue:RoundRobinPacketQueue = RoundRobinPacketQueue(self._last_process_time)  # 报文队列
         self._packet_counter:int = 0 # 报文数量
-        self._drain_large_queues:bool=True # 开启排空
+        self._drain_large_queues:bool=False # 开启排空
         self._rtp_header_extensions_map=rtp_header_extensions_map
         # logging
         # self.__log_debug: Callable[..., None] = lambda *args: None
@@ -441,7 +441,7 @@ class PacingController:
             queue_size_data=self._packet_queue.size() #pacer 当前队列总数据量Byte
             if queue_size_data>0:
                 self._packet_queue.update_queue_time(now)
-                if self._drain_large_queues: # 是否开启排空
+                if self._drain_large_queues: # 是否开启排空 关键！！！！！！
                     avg_time_left=max(1,self._queue_time_limit.total_seconds()*1000-self._packet_queue.average_queuetime())
                     min_rate_need=queue_size_data/avg_time_left # 需要的pacing rate
                     if min_rate_need>target_rate:
