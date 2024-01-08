@@ -499,9 +499,17 @@ baseline 编码：
 
 1. 在RtpSender中，发送数据包是通过self.transport._send_rtp()实现，发送的报文类型：（1）视频报文（2）音频报文 （3）重传报文 （4）RTCP控制报文
 2. 去除self.transport._send_rtp()直接发送的部分，待发送的数据包全部通过PacedSender.enqueue_packets（）进入优先级队列
+   
+## 3. pacer排空的问题
+pacer rate=1.5*target rate
+乘的倍率：防止发送速率
+## 4. jitter delay
+
+
 ### 实验测试
 #### 1. 加入Pacer模块后对baseline进行测试
    配置：关闭排空，pacer rate*1.0
+   log:text15
    测试结果：
    （1）端到端延迟分析
      --Pacer delay：测量的是每帧图像第一个数据包在pacer队列中的排队延迟
@@ -517,4 +525,51 @@ baseline 编码：
     ![](./res_picture/test1-6.png)
     （3）帧大小
     ![](./res_picture/test1-3.png)
-  
+  配置：关闭排空 pacer rate*1.5
+  log:text16
+  测试结果：
+    （1）端到端延迟分析
+    --Pacer delay：
+    ![](./res_picture/test2-5.png)
+    --Pacer remain bytes:
+    ![](./res_picture/test2-4.png)
+    --Trans delay:
+    ![](./res_picture/test2-1.png)
+    --RTT:
+    ![](./res_picture/test2-2.png)
+    (2)速率分析
+    ![](./res_picture/test2-6.png)
+    （3）帧大小
+    ![](./res_picture/test2-3.png)
+   配置：关闭排空，pacer rate*2.5
+   log:text17
+   测试结果：
+       （1）端到端延迟分析
+    --Pacer delay：
+    ![](./res_picture/test3-5.png)
+    --Pacer remain bytes:
+    ![](./res_picture/test3-4.png)
+    --Trans delay:
+    ![](./res_picture/test3-1.png)
+    --RTT:
+    ![](./res_picture/test3-2.png)
+    (2)速率分析
+    ![](./res_picture/test3-6.png)
+    （3）帧大小
+    ![](./res_picture/test3-3.png)
+   配置：开启排空，最大排队延迟200ms，pacer rate*1.0
+   log:text18
+   测试结果：
+       （1）端到端延迟分析
+    --Pacer delay：
+    ![](./res_picture/test4-5.png)
+    --Pacer remain bytes:
+    ![](./res_picture/test4-4.png)
+    --Trans delay:
+    ![](./res_picture/test4-1.png)
+    --RTT:
+    ![](./res_picture/test4-2.png)
+    (2)速率分析
+    ![](./res_picture/test4-6.png)
+    （3）帧大小
+    ![](./res_picture/test4-3.png)

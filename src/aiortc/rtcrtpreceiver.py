@@ -20,7 +20,7 @@ from .rate import RemoteBitrateEstimator
 from .rtcdtlstransport import RTCDtlsTransport
 from .rtcrtpparameters import (RTCRtpCapabilities, RTCRtpCodecParameters,
                                RTCRtpReceiveParameters)
-from .rtp import (RTCP_PSFB_APP, RTCP_PSFB_PLI, RTCP_RTPFB_NACK,
+from .rtp import (RTCP_PSFB_APP, RTCP_PSFB_PLI, RTCP_RTPFB_NACK,RTCP_PSFB_IF,
                   RTP_HISTORY_SIZE, AnyRtcpPacket, RtcpByePacket,
                   RtcpPsfbPacket, RtcpReceiverInfo, RtcpRrPacket,
                   RtcpRtpfbPacket, RtcpSrPacket, RtpPacket, clamp_packets_lost,
@@ -592,7 +592,10 @@ class RTCRtpReceiver:
             return
 
         # try to re-assemble encoded frame 尝试重新组装编码帧
-        pli_flag, encoded_frame, jit_dur = self.__jitter_buffer.add(packet)#向抖动缓冲区（Jitter Buffer）添加 RTP 包
+        pli_flag, encoded_frame, jit_dur ,is_key_frame= self.__jitter_buffer.add(packet)#向抖动缓冲区（Jitter Buffer）添加 RTP 包
+        # 多流编码时检测是否需要发送I帧接收完成信号
+        if self.use_multistream and is_key_frame:
+            await self._send_rtcp_ifkey(packet.ssrc)
         if jit_dur is not None: 
             self.__log_debug('[FRAME_INFO] T: %d, jit_dur: %d, Bytes: %d', encoded_frame.timestamp, jit_dur, len(encoded_frame.data))
         # check if the PLI should be sent 如果成功获得完整的编码帧，检查是否需要发送PLI RTCP包
@@ -681,7 +684,15 @@ class RTCRtpReceiver:
                 fmt=RTCP_PSFB_PLI, ssrc=self.__rtcp_ssrc, media_ssrc=media_ssrc
             )
             await self._send_rtcp(packet)
-
+    async def _send_rtcp_ifkey(self, media_ssrc: int) -> None:
+            """
+            Send an RTCP packet to report picture loss.
+            """
+            if self.__rtcp_ssrc is not None:
+                packet = RtcpPsfbPacket(
+                    fmt=RTCP_PSFB_IF, ssrc=self.__rtcp_ssrc, media_ssrc=media_ssrc
+                )
+                await self._send_rtcp(packet)
     def _set_rtcp_ssrc(self, ssrc: int) -> None:
         self.__rtcp_ssrc = ssrc
 

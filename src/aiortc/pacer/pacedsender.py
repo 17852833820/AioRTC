@@ -24,7 +24,7 @@ kMaxDebtInTime=timedelta(milliseconds=500)
 kMaxElapsedTime = timedelta(seconds=2)
 kMaxProcessingInterval=timedelta(seconds=30)
 
-kMaxExpectedQueueLength=timedelta(milliseconds=200)
+kMaxExpectedQueueLength=timedelta(milliseconds=200) # 最大排队延迟
 kDefaultPaceMultiplier=2.5
 kPausedProcessInterval =kCongestedPacketInterval
 kMinSleepTime=timedelta(milliseconds=1)

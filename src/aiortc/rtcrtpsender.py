@@ -17,7 +17,7 @@ from .codecs.base import Encoder
 from .exceptions import InvalidStateError
 from .mediastreams import MediaStreamError, MediaStreamTrack
 from .rtcrtpparameters import RTCRtpCodecParameters, RTCRtpSendParameters
-from .rtp import (RTCP_PSFB_APP, RTCP_PSFB_PLI, RTCP_RTPFB_NACK,
+from .rtp import (RTCP_PSFB_APP, RTCP_PSFB_PLI, RTCP_RTPFB_NACK,RTCP_PSFB_IF,
                   RTP_HISTORY_SIZE, AnyRtcpPacket, RtcpByePacket,
                   RtcpPsfbPacket, RtcpRrPacket, RtcpRtpfbPacket,
                   RtcpSdesPacket, RtcpSenderInfo, RtcpSourceInfo, RtcpSrPacket,
@@ -281,6 +281,9 @@ class RTCRtpSender():
         #处理 PLI 类型的 RTCP 包：请求关键帧
         elif isinstance(packet, RtcpPsfbPacket) and packet.fmt == RTCP_PSFB_PLI:
             self._send_keyframe()
+        # 多流编码时，关键帧接收完成信号
+        elif isinstance(packet,RtcpPsfbPacket) and packet.fmt==RTCP_PSFB_IF:
+            self._recv_keyframe_finished()
         #处理 APP 类型的 RTCP 包：REMB反馈包（包含估计的带宽信息）
         elif isinstance(packet, RtcpPsfbPacket) and packet.fmt == RTCP_PSFB_APP:
             try:
@@ -290,7 +293,7 @@ class RTCRtpSender():
                     if self.__encoder and hasattr(self.__encoder, "target_bitrate"):
                         self.__encoder.target_bitrate = bitrate
                     # 更新pacer速率
-                    pacing_rate=(1.0*bitrate)/1024
+                    pacing_rate=(2.5*bitrate)/1024
                     self.pace_sender.set_pacing_rates(pacing_rate,0)# kbps
                     self.__log_debug(
                         "BWE | receiver estimated maximum bitrate Target bitrate:%d bps,encode bitrate:%d,pacing bitrate:%d", bitrate,self.__encoder.target_bitrate,pacing_rate
@@ -355,7 +358,8 @@ class RTCRtpSender():
             # await self.transport._send_rtp(packet_bytes)
             # 组装RtpPacketToSend并入队
             self.pace_sender.enqueue_packets(packets)
-
+    def _recv_keyframe_finished(self)->None:
+        self.encode_mode.transition()#转换到S3：关键帧传输完成
     def _send_keyframe(self) -> None:
         """
         Request the next frame to be a keyframe.
@@ -519,8 +523,8 @@ class RTCRtpSender():
                         self.encode_role_forwart=not self.encode_role_forwart
                 if self._data.index%10==1 and self._data.index>=10:
                     self.encode_mode.transition()#转换到S2：一张关键帧编码完成开始传输
-                if  self._data.index%10==5 and self._data.index>=10:
-                    self.encode_mode.transition()#转换到S3：关键帧传输完成
+                # if  self._data.index%10==5 and self._data.index>=10:
+                #     self.encode_mode.transition()#转换到S3：关键帧传输完成
                
                 # 对于正常P帧编码的stream，正常传输直到编码器停止返回None
                 # if not self.condition_Finish_event.is_set() and enc_frame:

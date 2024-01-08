@@ -32,7 +32,7 @@ class JitterBuffer:
     def capacity(self) -> int:
         return self._capacity
 
-    def add(self, packet: RtpPacket) -> Tuple[bool, Optional[JitterFrame],int]:
+    def add(self, packet: RtpPacket) -> Tuple[bool, Optional[JitterFrame],int,bool]:
         pli_flag = False
         if self._origin is None:# # 如果缓冲区的起始序列号为空，表示这是第一个数据包，设置起始序列号和相关变量
             self._origin = packet.sequence_number
@@ -67,8 +67,8 @@ class JitterBuffer:
         self.t1=current_ms()
         # if packet.timestamp not in self._packet_times_in: self._packet_times_in[packet.timestamp] = 0  #_packet_times_in记录该帧所有数据包的接收时间
         # self._packet_times_in[packet.timestamp]=current_ms()
-        encodeframe,jit_dur=self._remove_frame(packet.sequence_number)
-        return pli_flag, encodeframe,jit_dur
+        encodeframe,jit_dur,is_key_frame=self._remove_frame(packet.sequence_number)
+        return pli_flag, encodeframe,jit_dur,is_key_frame
     """从缓冲区中移除一个完整的 RTP 帧"""
     def _remove_frame(self, sequence_number: int) -> Tuple[Optional[JitterFrame],int]:
         frame = None
@@ -78,7 +78,7 @@ class JitterBuffer:
         timestamp = None
         import logging
         logger = logging.getLogger(__name__)
-
+        is_key_frame=False
         for count in range(self.capacity): #遍历缓冲区中的每个位置，获取对应位置的 RTP 包
             pos = (self._origin + count) % self._capacity
             packet = self._packets[pos]
@@ -94,6 +94,7 @@ class JitterBuffer:
                         data=b"".join([x._data for x in packets]), timestamp=timestamp,stream_id=packets[0].extensions.marker_first
                     )
                     remove = count
+                    is_key_frame=packets[0]._is_key_frame
                     # avg_time_in = np.mean(self._packet_times_in[timestamp]) #计算当前 RTP 帧的平均到达时间
                     # jit_dur = current_ms() - avg_time_in #帧的到达时间与其平均到达时间的差异
 
@@ -110,7 +111,7 @@ class JitterBuffer:
                     # logger.info("jitter frame output: {0} s".format(max(list(self._packet_times_in.keys()))))
                     
                     jit_dur=ts-self._packet_times_in[timestamp][-1]
-                    return frame, jit_dur
+                    return frame, jit_dur,is_key_frame
                 
                 # start a new frame
                 packets = []
@@ -118,7 +119,7 @@ class JitterBuffer:
 
             packets.append(packet)
 
-        return None, None
+        return None, None,is_key_frame
 
     def remove(self, count: int) -> None:
         assert count <= self._capacity
