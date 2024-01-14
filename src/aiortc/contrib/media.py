@@ -494,7 +494,7 @@ class MediaRecorder:
                 frame = await track.recv() #从音频/视频轨道接收帧
             except MediaStreamError:
                 return
-           
+            
             if not context.started:
                 # adjust the output size to match the first frame
                 if isinstance(frame, VideoFrame):

@@ -813,12 +813,17 @@ class RtpPacketToSend(RtpPacket):
     def __init__(self, payload_type: int = 0, marker: int = 0, sequence_number: int = 0, timestamp: int = 0, ssrc: int = 0, payload: bytes = b"") -> None:
         super().__init__(payload_type, marker, sequence_number, timestamp, ssrc, payload)
         self._capture_time_ms:int =0
+        self._recv_time_ms:int=0
         self._packet_type:Optional[RtpPacketMediaType]=None
         self._retransmitted_sequence_number: Optional[int] = None
         self._allow_retransmission: bool = False
         self._application_data: List[int] = []
         self._is_first_packet_of_frame: bool = False
         self._is_key_frame: bool = False
+    def set_recv_time_ms(self, time: int):
+        self._recv_time_ms = time
+    def recv_time_ms(self)->int:
+        return self._recv_time_ms
     def set_capture_time_ms(self, time: int):
         self._capture_time_ms = time
     def capture_time_ms(self)->int:

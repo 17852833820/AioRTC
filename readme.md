@@ -504,8 +504,81 @@ baseline 编码：
 pacer rate=1.5*target rate
 乘的倍率：防止发送速率
 ## 4. jitter delay
+![Alt text](.assert/接收端1.png)
+![Alt text](.assert/接收端2.png)
+参考：https://www.jianshu.com/p/bb34995c549a
+https://www.jianshu.com/p/bb34995c549a
+https://blog.csdn.net/cchao985771161/article/details/112240091
+1. Jitter Buffer结构和基本流程：
+![Alt text](.assert/2021010515574254.png)
+由于aiortc基于pyav库实现编解码，不需要手动实现参考帧设置等，直接得到可解码的帧列表
+2. 抖动计算：
+JitterDelay由两部分延迟造成：传输大帧引起的延迟和网络噪声引起的延迟
+计算公式：
+JitterDelay=deltaFS/C+networkjitter=
+其deltaFS是两帧差异，C是信道传输速率
+JitterDelay=theta[0]*(MaxFS-AvgFS)+[noiseStdDevs*sqrt(varNoise)-noiseStdDevOffset]
+其中：theta[0]是信道传输速率的倒数1/C，theta[1]是networkjitter
+     MaxFS是自会话开始以来所收到的最大帧的大小
+     AvgFS表示平均帧大小
+     noiseStdDevs表示噪声系数2.33
+     varNoise表示噪声方差
+     noiseStdDevOffset是噪声扣除常数30ms
+解码线程获取一帧数据解码之前，根据上述公式计算当前帧的JitterDelay，然后加上解码延迟和渲染延迟得到当前帧的预期渲染结束时间，然后根据当前时刻确定当前帧在解码之前需要等待的时间，以保证视频渲染的平滑性
+目标：估计传输速率和网络都懂，即theta，然后根据估计的theta估计jitter delay
+方法：传输速率和网络抖动的估计：卡尔曼滤波
+（1）计算帧间延迟frameDelay(观测值) = 两帧的接收时间差 - 两帧的发送时间差
+    ![Alt text](.assert/帧间延迟.png)
+（2）更新Jitter状态：平均帧大小，最大帧大小，噪声平均值，信道传输速率，网络排队延迟等
+![Alt text](.assert/更新Jitter状态.png)
+（2）VCMJitterEstimator update_estimate通过帧间延迟更新jitter状态，计算出估计的最优抖动值(帧间延迟观测值)
+（3）VCMTiming计算目标延迟，更新当前延迟（当前帧解码前需要等待的时间）
+（4）VCMTiming视频帧的最终渲染时间=帧平滑时间+当前延迟
+3. 从Frame Buffer获取下一个解码帧的过程（参考frame_buffer2.cc）
+   最大等待时间max_wait_time = keyframe_required_ ? 200ms : 3000ms;
+   1. 获取当前帧可以需要等待的时间
+        - RenderTimeMs（）获取并设置渲染时间
+        - MaxWaitingTime（）获取等待时间FindNextFrame
+        - 等待一段时间后再解码，启动一个延迟执行的异步任务，每次任务执行过程中获取一张待解码的视频帧GetNextFrame
+4. wait time和jitter delay的关系：
+  wait_time=render_time_ms-now_ms-self.required_decode_time_ms()-self._render_delay_ms=目标延迟-解码延迟-渲染延迟=_jitter_delay_ms
+  其中render_time_ms=_current_delay_ms+帧平滑延迟
+  _current_delay_ms逐渐逼近target_delay_ms
+  目标延迟target_delay_ms=(self._jitter_delay_ms + self.required_decode_time_ms() + self._render_delay_ms)
+5. 遇到的问题target_delay_ms太大
+   jitter delay一直在增加，导致target delay随之增加达到最大阈值，然后reset
+   current delay一直在增加：
+   ![Alt text](.assert/problem1.png)
+   问题点：为什么运行到一半update_current_delay就不再被调用了，后续确实在解码
+   原因：delay ms<0函数提前return
+   current delay阶梯式增长的根本原因：_decoder_time_ms:44突然增长，导致target_delay_ms:62增加，此时current delay:20.99994613435157,target_delay_ms:62.145751920012216,jitter delay:8.145751920012213,delay ms:33.0
+   由于self._current_delay_ms + delay_ms <= target_delay_ms导致Update 1:current delay before:20.99994613435157,after:53.999946134351575
+   即阶梯式增长，之后delay ms变成负数，_current_delay_ms就一直不再改变
+   _current_delay_ms的本质是逼近当前延迟，如果_current_delay_ms+delay ms< 目标延迟，缓慢增加逼近目标延迟
+   如果_current_delay_ms+delay ms >目标延迟，_current_delay_ms=目标延迟，可以降低当前延迟
+   所以_current_delay_ms阶梯式增长的本质原因是目标延迟的突发增加，即解码延迟的突发增加，导致_current_delay_ms+delay ms< 目标延迟，进而当前延迟加上delay ms较大值
+   ![Alt text](.assert/当前延迟和目标延迟.png)
+   先后顺序：上一帧解码延迟变成了44，当前帧更新时，预期解码时刻=预期渲染时间-上一帧的解码时间-渲染时间，预期解码时刻变小，delta ms变大
+   delta ms 为负数的原因：实际解码时刻<预期解码时刻（预期渲染时刻-解码时间-渲染时间）
+   原因分析：
+   1. 可能是因为这个解码时间我没有滤波做平滑，直接用的上一帧的解码时间，当前帧的delta ms=实际解码时刻-（预期渲染时间戳-上一帧的解码时间-渲染时间），如果上一帧解码时间比较大，就导致预期解码时刻变小，进而delta ms变大，等到下一帧delta ms
+    解决办法：采用webrtc的方式，只考虑最近10s的解码时间取95%分位点
+    优化前后：
+    ![Alt text](.assert/优化1前.png)
+    ![Alt text](.assert/优化1前2.png)
+    ![Alt text](.assert/优化1后.png)
+    ![Alt text](.assert/优化1后2.png)
+6. 遇到的问题解码速度比发送速度慢很多
+   发送端发送的最后一个数据包：
+   2024-01-14 21:48:50 - DEBUG - RTCRtpSender(video) [FRAME_INFO] Stream id : 1, Number: 4096, PTS: 1717152300, enc_dur: 36 Type: SPS, size: 5259, queue_time: 165 ms
 
-
+   2024-01-14 21:48:50 - DEBUG - RTCRtpSender(video) > RtpPacket(seq=15545, ts=1717152300, marker=1, payload=99, 984 bytes)
+    接收端接收的最后一个数据包：seq=15098的数据包属于第3976张图像
+    2024-01-14 21:48:50 - DEBUG - RTCRtpReceiver(video) < RtpPacket(seq=15098, ts=1716705603, marker=1, payload=99, 868 bytes)
+    接收端解码的最后一张图像：
+    2024-01-14 21:48:50 - DEBUG - RTCRtpReceiver(decoder_worker) [DECODE] Add Render Frame...Stream id: 1, Number: 2818, Type: 2
+    问题分析：接收端接收到了3976张图像的数据包，但只解码完成了2818张，剩余的数据包接收到了但未来得及解码
+    
 ### 实验测试
 #### 1. 加入Pacer模块后对baseline进行测试
    配置：关闭排空，pacer rate*1.0

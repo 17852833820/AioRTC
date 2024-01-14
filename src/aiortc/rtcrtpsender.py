@@ -293,7 +293,7 @@ class RTCRtpSender():
                     if self.__encoder and hasattr(self.__encoder, "target_bitrate"):
                         self.__encoder.target_bitrate = bitrate
                     # 更新pacer速率
-                    pacing_rate=(2.5*bitrate)/1024
+                    pacing_rate=(1.0*bitrate)/1024
                     self.pace_sender.set_pacing_rates(pacing_rate,0)# kbps
                     self.__log_debug(
                         "BWE | receiver estimated maximum bitrate Target bitrate:%d bps,encode bitrate:%d,pacing bitrate:%d", bitrate,self.__encoder.target_bitrate,pacing_rate
@@ -574,7 +574,6 @@ class RTCRtpSender():
                         packet.extensions.marker_first= "1" #stream id
                         if enc_frame.audio_level is not None:
                             packet.extensions.audio_level = (False, -enc_frame.audio_level)
-                        # 记录第一个数据包的发送时间
                         
                         # send packet 调用_send_rtp发送RTP数据包
                         self.__log_debug("> %s", packet)

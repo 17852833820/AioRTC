@@ -143,7 +143,7 @@ class PacedSender(Module):
         self.all_bytes+=(len(packet_bytes))
         now=clock.current_datetime()
         if (now-self.last_time).total_seconds()>1.0:
-            logger.info("pacing rate:{0}".format(self.all_bytes))
+            # logger.info("pacing rate:{0}".format(self.all_bytes))
             self.all_bytes=0
         return 
     #生成指定size的padding包，可能包含多个报文
@@ -292,7 +292,7 @@ class PacingController:
         self._last_process_time_ = now
         if elapsed_time>kMaxElapsedTime:
             elapsed_time = kMaxElapsedTime
-        logger.info("PacerTime:{0}, elapsed_time:{1}".format(now,elapsed_time))
+        # logger.info("PacerTime:{0}, elapsed_time:{1}".format(now,elapsed_time))
         return elapsed_time
     def set_queue_time_limit(self,limit:timedelta)->None:
         self._queue_time_limit=limit
@@ -345,7 +345,7 @@ class PacingController:
         # 3. 检查剩余预算是否足够，预算小于0不发送
         if self._mode==ProcessMode.kPeriodic:
             if self._media_budget.bytes_remaining()<=0:
-                logger.info("Debug | bytes_remaining<0")
+                # logger.info("Debug | bytes_remaining<0")
                 return None
         else:
             if now<=target_send_time:

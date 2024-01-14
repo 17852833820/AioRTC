@@ -69,7 +69,7 @@ class ProcessThreadImpl:
             self.stop_ = True
         self.wake_up_.set()
         self.thread_.join()
-        self.stop=False
+        self.stop_=False
         self.thread_=None
         for m in self.modules_:
             m.module.process_thread_attached(None) 
