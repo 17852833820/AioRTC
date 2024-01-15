@@ -10,7 +10,10 @@
 /build
 /dist
 /docs/_build
-
+/res_picture/
+/dataset/
+/tests/
+/receive_data/
 # Environments
 .env
 .venv
@@ -19,3 +22,5 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+
+

@@ -619,7 +619,7 @@ JitterDelay=theta[0]*(MaxFS-AvgFS)+[noiseStdDevs*sqrt(varNoise)-noiseStdDevOffse
     根本原因：如果使用 asyncio.run_coroutine_threadsafe 启动一个新的协程任务，而上一个任务尚未完成，新任务会被安排在事件循环队列中等待执行。一旦上一个任务完成，事件循环将执行下一个任务。
     优化：            
     future= await self.delayed_decode(decoder, encoded_frame, wait_time, output_q,loop)
-    优化后的执行情况log27，log28，log29 log30:虽然不再出现延迟，但jitter帧间延迟抖动加剧(偶然因素,原因是rtt增长)
+    优化后的执行情况log27，log28，log29 log30:虽然不再出现延迟，但jitter帧间延迟抖动加剧(偶然因素,原因是rtt增长)，这种改进只是轻微改进，并没有解决cpu调度的根本问题，根本问题是cpu利用率，性能问题
     ![Alt text](.assert/优化2后2.png)
     ![Alt text](.assert/优化2后3.png)
     ![Alt text](.assert/优化2后.png)
@@ -702,3 +702,5 @@ JitterDelay=theta[0]*(MaxFS-AvgFS)+[noiseStdDevs*sqrt(varNoise)-noiseStdDevOffse
     ![](./res_picture/test4-6.png)
     （3）帧大小
     ![](./res_picture/test4-3.png)
+ #### 2. 加入Jitter Delay模块并将编码速率改为0.1-3Mbps对baseline进行测试
+ 

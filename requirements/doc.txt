@@ -1,2 +1,11 @@
 sphinx_autodoc_typehints
 sphinxcontrib-trio
+numpy
+pylibsrtp
+cryptography
+opencv-python
+aiohttp
+pyOpenSSL
+aioice
+google_crc32c
+pyav=11.0.1
