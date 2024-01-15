@@ -628,6 +628,13 @@ JitterDelay=theta[0]*(MaxFS-AvgFS)+[noiseStdDevs*sqrt(varNoise)-noiseStdDevOffse
     ![Alt text](image-1.png)
     ![Alt text](image-2.png)
     ![Alt text](image-3.png)
+    log31:
+    ![Alt text](image-4.png)
+    ![Alt text](image-5.png)
+    ![Alt text](image-6.png)
+    ![Alt text](image-7.png)
+7. 问题：不定时程序中断问题
+   
 ### 实验测试
 #### 1. 加入Pacer模块后对baseline进行测试
    配置：关闭排空，pacer rate*1.0
