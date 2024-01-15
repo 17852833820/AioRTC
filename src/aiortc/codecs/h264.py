@@ -410,7 +410,7 @@ class H264Encoder(Encoder):
                 data_to_send += package_bytes
         self.frame_size=len(data_to_send)
         # logger.info("Encodec | Frame  Type: {0} ,size: {1}".format(frame.pict_type,len(data_to_send)))
-        # logger.info("Encodec | Target_bitrate: {0}".format(self.target_bitrate))
+        # logger.info("Encodec | Actual encode_bitrate: {0}".format(self.target_bitrate))
 
         if data_to_send: #将累积的编码数据分割为较小的数据包，并通过_split_bitstream方法发送
             yield from self._split_bitstream(data_to_send)#将 data_to_send 中经过 _split_bitstream 处理后的每个 NAL 单元的内容逐一返回给调用方

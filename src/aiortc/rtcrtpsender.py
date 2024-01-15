@@ -293,7 +293,7 @@ class RTCRtpSender():
                     if self.__encoder and hasattr(self.__encoder, "target_bitrate"):
                         self.__encoder.target_bitrate = bitrate
                     # 更新pacer速率
-                    pacing_rate=(1.0*bitrate)/1024
+                    pacing_rate=(1.5*bitrate)/1024
                     self.pace_sender.set_pacing_rates(pacing_rate,0)# kbps
                     self.__log_debug(
                         "BWE | receiver estimated maximum bitrate Target bitrate:%d bps,encode bitrate:%d,pacing bitrate:%d", bitrate,self.__encoder.target_bitrate,pacing_rate
@@ -481,7 +481,7 @@ class RTCRtpSender():
                 # 计算发送速率
                 if self.timestamp-self.last_timestamp>1000:
                     self.send_rate=((self.__octet_count-self.last_octet)*8)/((self.timestamp-self.last_timestamp)/1000)
-                    self.__log_debug('[Send_INFO] timestamp: %d, send_rate: %f bps, packet_count: %d', self.timestamp,self.send_rate, self.__packet_count-self.last_count)
+                    self.__log_debug('[Send_INFO] timestamp: %d, send_rate: %f bps, packet_count: %d,target_bitrate: %d bps', self.timestamp,self.send_rate, self.__packet_count-self.last_count,self.__encoder.target_bitrate)
                     self.last_octet=self.__octet_count
                     self.last_timestamp=self.timestamp
                     self.last_count=self.__packet_count

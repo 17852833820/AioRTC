@@ -143,7 +143,7 @@ class PacedSender(Module):
         self.all_bytes+=(len(packet_bytes))
         now=clock.current_datetime()
         if (now-self.last_time).total_seconds()>1.0:
-            # logger.info("pacing rate:{0}".format(self.all_bytes))
+            logger.info("Actual pacing_bitrate:{0}".format(self.all_bytes))
             self.all_bytes=0
         return 
     #生成指定size的padding包，可能包含多个报文
@@ -194,7 +194,7 @@ class PacingController:
         self._include_overhead:bool = False
         self._packet_queue:RoundRobinPacketQueue = RoundRobinPacketQueue(self._last_process_time)  # 报文队列
         self._packet_counter:int = 0 # 报文数量
-        self._drain_large_queues:bool=False # 开启排空
+        self._drain_large_queues:bool=False # 排空
         self._rtp_header_extensions_map=rtp_header_extensions_map
         # logging
         # self.__log_debug: Callable[..., None] = lambda *args: None

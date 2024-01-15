@@ -578,7 +578,56 @@ JitterDelay=theta[0]*(MaxFS-AvgFS)+[noiseStdDevs*sqrt(varNoise)-noiseStdDevOffse
     接收端解码的最后一张图像：
     2024-01-14 21:48:50 - DEBUG - RTCRtpReceiver(decoder_worker) [DECODE] Add Render Frame...Stream id: 1, Number: 2818, Type: 2
     问题分析：接收端接收到了3976张图像的数据包，但只解码完成了2818张，剩余的数据包接收到了但未来得及解码
-    
+    问题追踪：跟踪接收数据包和解码过程
+    当有下一帧的第一个数据包接收到时，上一帧数据组包完成，放入待解码队列
+    放入待解码队列标记：
+    2024-01-12 14:08:02 - INFO - ts delta:0,tr_delta:0,frame.frame_delay_ms:0
+    2024-01-12 14:11:29 - DEBUG - RTCRtpReceiver(video) [FRAME_INFO] T: 836413277 ,  frame packet dur: 20 ms
+    解码完成标记：
+    2024-01-12 14:08:02 - DEBUG - RTCRtpReceiver(decoder_worker) [DECODE] Add Render Frame...Stream id: 1, Number: 0, Type: 1
+    2024-01-12 14:08:02 - DEBUG - RTCRtpReceiver(decoder_worker) [DECODE] stream_id: 1, is_key_frame: 1, T: 0, dec_dur: 2, wait_time: 0, jitter_delay_ms: 1, frame_delay_ms: 0, render_time_ms: 3914028482733, frame_delay_ms: 0, receive_time_ms: 3914028482648, Bytes: 1574
+    分析表明，一连接收并放入待解吗队列好几张都没有解码一张，确实收到了数据包，组成了完整帧，但解码不及时
+    进一步检查发现：
+    下列多条日志的频率更慢，与实际解码频率一致
+    Decode: get task from input frame queue
+    2024-01-14 23:17:45 - DEBUG - RTCRtpReceiver(decoder_worker) actual wait time:1,expect wait time:1.0
+    2024-01-14 23:17:45 - DEBUG - RTCRtpReceiver(decoder_worker) [DECODE] Add Render Frame...Stream id: 1, Number: 20, Type: 2
+    2024-01-14 23:17:45 - DEBUG - RTCRtpReceiver(decoder_worker) [DECODE] stream_id: 1, is_key_frame: 0, T: 75075, dec_dur: 2, wait_time: 1, jitter_delay_ms: 17, frame_delay_ms: -37, render_time_ms: 3914234265355, frame_delay_ms: -37, receive_time_ms: 3914234265318, Bytes: 733
+    下列日志的更新频率和接收数据帧的频率一致：
+    2024-01-14 23:17:44 - DEBUG - Receive Frame timestamp:3753,Push frame queue
+    上述现象说明：接收端确实按照接收速率接收了足够的数据帧并放入了frame queue，但decoder_worker线程未及时处理，处理速率<接收速率
+    可能的原因：
+    - 多线程线程同步问题
+    - 循环效率问题：数据添加速度大于数据处理速度，导致队列数据堆积
+    - 内存泄漏
+    根据2024-01-15 09:59:27 - INFO - input queue size:47日志记录，输入队列中的数据帧逐渐堆积越来越多(log26)
+    ![Alt text](.assert/待解码队列堆积.png)
+    初始阶段处理时间小于25ms时无队列堆积，处理时间大于40ms时开始队列堆积，下图队列堆积数量有两倍的重复，横坐标/2
+    ![Alt text](.assert/开始堆积.png)
+    下边分析为什么120张左右开始往后处理速度变得始终大于40ms：
+    处理速度变慢的代码片段：
+    t1=clock.current_ms()
+            logger.info("loop duration1:{0}".format(t1-start_time))
+            future=asyncio.run_coroutine_threadsafe(self.delayed_decode(decoder, encoded_frame, wait_time, output_q,loop), loop)
+            dec_dur=future.result()
+            t2=clock.current_ms()
+            logger.info("loop duration2:{0}".format(t2-t1))
+    进一步分析：
+    时间消耗在从到运行完asyncio.run_coroutine_threadsafe，等待了32ms才进入delayed_decode到t4
+    async def delayed_decode(self,decoder,encoded_frame,wait_time,output_q,loop):
+        t4=clock.current_ms()
+    根本原因：如果使用 asyncio.run_coroutine_threadsafe 启动一个新的协程任务，而上一个任务尚未完成，新任务会被安排在事件循环队列中等待执行。一旦上一个任务完成，事件循环将执行下一个任务。
+    优化：            
+    future= await self.delayed_decode(decoder, encoded_frame, wait_time, output_q,loop)
+    优化后的执行情况log27，log28，log29 log30:虽然不再出现延迟，但jitter帧间延迟抖动加剧(偶然因素,原因是rtt增长)
+    ![Alt text](.assert/优化2后2.png)
+    ![Alt text](.assert/优化2后3.png)
+    ![Alt text](.assert/优化2后.png)
+    最终效果log30:
+    ![Alt text](image.png)
+    ![Alt text](image-1.png)
+    ![Alt text](image-2.png)
+    ![Alt text](image-3.png)
 ### 实验测试
 #### 1. 加入Pacer模块后对baseline进行测试
    配置：关闭排空，pacer rate*1.0

@@ -198,16 +198,16 @@ class FrameDecoder:
     def set_frame_rate(self,fps:int)->None:
         self.jitter_buffer._jitter_estimator.set_frame_rate(fps)
     def start(self,decoer_queue,output_queue):
-        self.thread_ = threading.Thread(target=self.decoder_worker, name=self.thread_name_,args=(
+        self.thread_ = threading.Thread(target=self.run_sync, name=self.thread_name_,args=(
                     asyncio.get_event_loop(),
                     decoer_queue,#待解码的队列
                     output_queue,#解码后输出的队列
                 ))
         self.thread_.start()
-    # def run_sync(self):
-    #     loop = asyncio.new_event_loop()
-    #     asyncio.set_event_loop(loop)
-    #     loop.run_until_complete(self.run_async())
+    def run_sync(self,loop, input_q, output_q):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(self.decoder_worker(loop, input_q, output_q))
     def join(self):
          with self.lock_:
             self.stop_ = True
@@ -258,7 +258,7 @@ class FrameDecoder:
             self.timing_.update_current_delay(render_time_ms,now_ms)
         return encoded_frame
     # 解码线程主任务
-    def decoder_worker(self, loop, input_q, output_q):
+    async def decoder_worker(self, loop, input_q, output_q):
         #初始化：用于追踪当前的解码器和编码器名称
         codec_name = None
         decoder = None
@@ -269,7 +269,9 @@ class FrameDecoder:
             )
 
         while True:#任务处理无限循环
+            # logger.info("input queue size:{0}".format(input_q.qsize()))
             task = input_q.get() #等待从输入队列 (input_q) 获取任务
+            logger.info("Decode: get task from input frame queue!{0}".format(task))
             if task is None:# 如果获取到的任务为 None，表示线程结束，将 None 放入输出队列 (output_q) 并终止循环。
                 # inform the track that is has ended
                 asyncio.run_coroutine_threadsafe(output_q.put(None), loop)
@@ -290,9 +292,17 @@ class FrameDecoder:
                 wait_time=0   
             # 启动延迟执行的异步任务
             encoded_frame=self.get_next_frame(encoded_frame)
-            future=asyncio.run_coroutine_threadsafe(self.delayed_decode(decoder, encoded_frame, wait_time, output_q,loop), loop)
-            dec_dur=future.result()
+            t1=clock.current_ms()
+            # future=asyncio.run_coroutine_threadsafe(self.delayed_decode(decoder, encoded_frame, wait_time, output_q,loop), loop)
+            future= await self.delayed_decode(decoder, encoded_frame, wait_time, output_q,loop)
+            t2=clock.current_ms()
+            logger.info("duration1:{0},t2:{1},t1:{2}".format(t2-t1,t2,t1))
+            # dec_dur=future.result()
+            dec_dur=future
+            t3=clock.current_ms()
+            logger.info("duration2:{0},t3:{1},t2:{2}".format(t3-t2,t3,t2))
             self.timing_.stop_decode_timer(dec_dur,clock.current_ms())
+            end_time=clock.current_ms()
         if decoder is not None:
             del decoder
     async def delayed_decode(self,decoder,encoded_frame,wait_time,output_q,loop):
@@ -867,9 +877,13 @@ class RTCRtpReceiver:
             if self.use_multistream and encoded_frame.stream_id == "2":
                 self.__decoder_queue2.put((codec, encoded_frame))
                 self.__decoder_thread2.set_frame_rate(self._track.fps)
+                logger.debug("Receive Frame timestamp:{0},Push frame queue2".format(encoded_frame.timestamp))
+                logger.info("input queue2 size:{0}".format(self.__decoder_queue2.qsize()))
             else:
                 self.__decoder_queue.put((codec, encoded_frame))
                 self.__decoder_thread.set_frame_rate(self._track.fps)
+                logger.debug("Receive Frame timestamp:{0},Push frame queue".format(encoded_frame.timestamp))
+                logger.info("input queue size:{0}".format(self.__decoder_queue.qsize()))
 
 
     async def _run_rtcp(self) -> None:
