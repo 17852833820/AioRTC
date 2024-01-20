@@ -1,0 +1,22 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "videostream-cli",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/examples/videostream-cli/cli.py",
+            // "program": "${workspaceFolder}/log/analyses.py",
+            // "program": "${workspaceFolder}/examples/server/server.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            // "args": ["offer","--play-from","./dataset/anamal-time.mp4","-v","-s", "tcp-socket", "--signaling-port", "2223"]
+            "args": ["answer", "--record-to","./receive_data/anamal-1080p.mp4","-v","-s","tcp-socket","--signaling-port","2223"]
+            // "args": ["answer","--record-to","./receive_data/test_recv.mp4"]
+
+        }
+    ]
+}

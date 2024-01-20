@@ -6,11 +6,9 @@
 .eggs
 .idea
 .mypy_cache
-.vscode
 /build
 /dist
 /docs/_build
-/res_picture/
 /dataset/
 /tests/
 /receive_data/
