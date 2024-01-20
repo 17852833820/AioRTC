@@ -453,7 +453,7 @@ baseline 编码：
 # 方案实现
 ## 1. 方案设计
 总体思路：
-![Alt text](ubGOntQabJ.jpg)
+![Alt text](.assert/ubGOntQabJ.jpg)
 问题：1. 多个编解码器是重建销毁还是复用
      1. 什么时候将P强制编码成I，即什么时候需要把I帧编码出备用P帧
      2. I帧传输完成后什么时候切换成备用流，需要有一个反馈信号，需扩展RTCP协议
@@ -464,7 +464,7 @@ baseline 编码：
    - Payload-specific FB messages
    - Application layer FB messages
     反馈包通用格式：
-    ![Alt text](tp2EQBzfwV.jpg)
+    ![Alt text](.assert/tp2EQBzfwV.jpg)
     - RTPFB  |  205  | Transport layer FB message
       - 0:    unassigned
       - 1:    Generic NACK
@@ -619,21 +619,22 @@ JitterDelay=theta[0]*(MaxFS-AvgFS)+[noiseStdDevs*sqrt(varNoise)-noiseStdDevOffse
     根本原因：如果使用 asyncio.run_coroutine_threadsafe 启动一个新的协程任务，而上一个任务尚未完成，新任务会被安排在事件循环队列中等待执行。一旦上一个任务完成，事件循环将执行下一个任务。
     优化：            
     future= await self.delayed_decode(decoder, encoded_frame, wait_time, output_q,loop)
-    优化后的执行情况log27，log28，log29 log30:虽然不再出现延迟，但jitter帧间延迟抖动加剧(偶然因素,原因是rtt增长)，这种改进只是轻微改进，并没有解决cpu调度的根本问题，根本问题是cpu利用率，性能问题
+    优化后的执行情况log27，log28，log29 log30:虽然不再出现延迟，但jitter帧间延迟抖动加剧(偶然因素,原因是rtt增长)，这种改进只是轻微改进，并没有解决cpu调度的根本问题，根本问题是cpu利用率，性能问题,采用服务器解码后问题解决
     ![Alt text](.assert/优化2后2.png)
     ![Alt text](.assert/优化2后3.png)
     ![Alt text](.assert/优化2后.png)
     最终效果log30:
-    ![Alt text](image.png)
-    ![Alt text](image-1.png)
-    ![Alt text](image-2.png)
-    ![Alt text](image-3.png)
+    ![Alt text](.assert/log30-1.png)
+    ![Alt text](.assert/log30-2.png)
+    ![Alt text](.assert/log30-3.png)
+    ![Alt text](.assert/log30-4.png)
     log31:
-    ![Alt text](image-4.png)
-    ![Alt text](image-5.png)
-    ![Alt text](image-6.png)
-    ![Alt text](image-7.png)
+    ![Alt text](.assert/log31-1.png)
+    ![Alt text](.assert/log31-2.png)
+    ![Alt text](.assert/log31-3.png)
+    ![Alt text](.assert/log31-4.png)
 7. 问题：不定时程序中断问题
+   根本原因：rtt突增
    
 ### 实验测试
 #### 1. 加入Pacer模块后对baseline进行测试
@@ -703,4 +704,87 @@ JitterDelay=theta[0]*(MaxFS-AvgFS)+[noiseStdDevs*sqrt(varNoise)-noiseStdDevOffse
     （3）帧大小
     ![](./res_picture/test4-3.png)
  #### 2. 加入Jitter Delay模块并将编码速率改为0.1-3Mbps对baseline进行测试
+ [log32]：
+ pacer rate= target rate*2.5
+ self._drain_large_queues:bool=False # 排空 
+ self.use_multistream =False
+ ![Alt text](./res_picture/log32-1.png)
+ ![Alt text](./res_picture/log32-2.png)
+ ![Alt text](./res_picture/log32-3.png)
+ ![Alt text](./res_picture/log32-4.png)
+ #### 3. 多流传输方案测试（未采用RTCP反馈表示I帧传输完成）
+【log34】
+ pacer rate= target rate*2.5
+ self._drain_large_queues:bool=False # 排空
+ self.use_multistream =True
+ 未采用I帧接收完成反馈
+ I帧间隔：10
+![Alt text](./res_picture/log34-1.png)
+![Alt text](./res_picture/log34-2.png)
+![Alt text](./res_picture/log34-3.png)
+![Alt text](./res_picture/log34-4.png)
+![Alt text](./res_picture/log34-5.png)
+![Alt text](./res_picture/log34-6.png)
+ 【log35】
+ pacer rate= target rate*2.5
+ self._drain_large_queues:bool=False # 排空
+ self.use_multistream =True
+ 未采用I帧接收完成反馈
+ I帧间隔：50
+![Alt text](./res_picture/log35-1.png)
+![Alt text](./res_picture/log35-2.png)
+![Alt text](./res_picture/log35-3.png)
+![Alt text](./res_picture/log35-4.png)
+![Alt text](./res_picture/log35-5.png)
+![Alt text](./res_picture/log35-6.png)
+ 【log36】
+ pacer rate= target rate*2.5
+ self._drain_large_queues:bool=False # 排空
+ self.use_multistream =True
+ 未采用I帧接收完成反馈
+ I帧间隔：100
+ ![Alt text](./res_picture/log36-1.png)
+ ![Alt text](./res_picture/log36-2.png)
+ ![Alt text](./res_picture/log36-3.png)
+ ![Alt text](./res_picture/log36-4.png)
+ ![Alt text](./res_picture/log36-5.png)
+ ![Alt text](./res_picture/log36-6.png)
+ [log37]
+ pacer rate= target rate*2.5
+ self._drain_large_queues:bool=False # 排空
+ self.use_multistream =True
+ 采用I帧接收完成反馈
+ I帧间隔：50
+ ![Alt text](./res_picture/log37-1.png)
+ ![Alt text](./res_picture/log37-2.png)
+ ![Alt text](./res_picture/log37-3.png)
+ ![Alt text](./res_picture/log37-4.png)
+ ![Alt text](./res_picture/log37-5.png)
+ ![Alt text](./res_picture/log37-6.png)
+ #### 4. Jitter Delay多流方案改进
+ （1）两个解码线程的jitter应该是同步的，流切换时jitter进行同步，比如第一个流的P帧解码完成后将jitter同步给另一个解码器
+    实现：两个解码线程共用同一个VCMTimg和JitterEstimate
+ （2）不参与渲染但参与解码的关键帧，不参与jitter delay的计算，直接解码不需要wait time
+(3) multi stream : fps problem(log38,log39)
+reason1: stream 1 and stream2 frame number problem
+deep reason:
+    for frame in decoder.decode(encoded_frame) every time decoder start with frame number 0
+result: add packet property:frame_number
+reson2: encoder1 and encoder2 not paused when needed
+[log38]
+pacer rate= target rate*2.5
+self._drain_large_queues:bool=False # 排空
+self.use_multistream =True
+未采用I帧接收完成反馈
+I帧间隔：50
+
+[log39]
+pacer rate= target rate*1.5
+self._drain_large_queues:bool=False # 排空
+self.use_multistream =True
+未采用I帧接收完成反馈
+I帧间隔：50
+
+
+
  

@@ -27,6 +27,7 @@ class JitterFrame:
         self.frame_delay_ms:int=0 # 帧间延迟观测值
         self.jitter_delay_ms:int=0 # 估计的最优jitter delay
         self.receive_time_ms:int=0 # 最后一个数据包的接收时间
+        self.is_force_key:bool=False
 
 
 class JitterBuffer:
@@ -131,6 +132,7 @@ class JitterBuffer:
                     remove = count
                     is_key_frame=packets[0]._is_key_frame
                     frame.is_key_frame=is_key_frame
+                    frame.is_force_key=packets[0]._is_force_key
                     # 计算wait time
                     frame=self.calculate_delay(packets,frame)
                    
@@ -386,7 +388,6 @@ class VCMJitterEstimator:
             self._alphaCount = self._alphaCountMax
         #  alpha值需要根据帧率跳帧，帧率低的时候噪声越大，需要增大alpha，噪声均值和方差也越大
         fps = self.get_frame_rate()
-        logger.info("fps:{0}".format(fps))
         # fps=30
         # // 在开始阶段（30个帧），估计会存在较大的噪声，会根据fps调整alpha:
         # // 30fps的时候，rate_scale=1

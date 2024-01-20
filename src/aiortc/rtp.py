@@ -820,6 +820,12 @@ class RtpPacketToSend(RtpPacket):
         self._application_data: List[int] = []
         self._is_first_packet_of_frame: bool = False
         self._is_key_frame: bool = False
+        self._is_force_key:bool=False
+        self._frame_number:int=0
+    def set_recv_time_ms(self, frame_number: int):
+        self._frame_number = frame_number
+    def recv_time_ms(self)->int:
+        return self._frame_number
     def set_recv_time_ms(self, time: int):
         self._recv_time_ms = time
     def recv_time_ms(self)->int:
@@ -871,6 +877,11 @@ class RtpPacketToSend(RtpPacket):
 
     def is_first_packet_of_frame(self) -> bool:
         return self._is_first_packet_of_frame
+    def set_is_force_key(self, is_force_key: bool):
+        self._is_force_key = is_force_key
+
+    def is_force_key(self) -> bool:
+        return self._is_force_key
 
     def set_is_key_frame(self, is_key_frame: bool):
         self._is_key_frame = is_key_frame
@@ -890,7 +901,7 @@ class RtpPacketToSend(RtpPacket):
             | len(self.csrc),
             (self.marker << 7) | self.payload_type,
             self.sequence_number,
-            (self._is_key_frame<<7)|(self._is_first_packet_of_frame<<6)|self._packet_type.value,
+            (self._is_key_frame<<7)|(self._is_first_packet_of_frame<<6)|(self._is_force_key<<5)|self._packet_type.value,
             self.timestamp,
             self.ssrc,
         )
@@ -931,7 +942,8 @@ class RtpPacketToSend(RtpPacket):
         )
         packet.set_is_key_frame(key_first_type>>7)
         packet.set_first_packet_of_frame((key_first_type>>6)&1)
-        packet.set_packet_type(key_first_type & 0x3F)
+        packet.set_is_force_key((key_first_type>>5)&1)
+        packet.set_packet_type(key_first_type & 0x1F)
         pos = RTP_HEADER_LENGTH
         for i in range(0, cc):
             packet.csrc.append(unpack_from("!L", data, pos)[0])

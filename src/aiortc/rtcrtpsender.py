@@ -34,15 +34,16 @@ class MultiEncodeMode:
     def __init__(self):
         self.current_state = "S0"
 
-    def transition(self):
-        if self.current_state == "S0":
-            self.current_state = "S1"
-        elif self.current_state == "S1":
-            self.current_state = "S2"
-        elif self.current_state == "S2":
-            self.current_state = "S3"
-        elif self.current_state == "S3":
-            self.current_state = "S1"
+    def transition(self,mode:str):
+        self.current_state=mode
+        # if self.current_state == "S0":
+        #     self.current_state = "S1"
+        # elif self.current_state == "S1":
+        #     self.current_state = "S2"
+        # elif self.current_state == "S2":
+        #     self.current_state = "S3"
+        # elif self.current_state == "S3":
+        #     self.current_state = "S1"
 
 class RTCEncodedFrame:
     def __init__(self, payloads: List[bytes], timestamp: int, audio_level: int):
@@ -292,8 +293,10 @@ class RTCRtpSender():
                     # 更新编码速率
                     if self.__encoder and hasattr(self.__encoder, "target_bitrate"):
                         self.__encoder.target_bitrate = bitrate
+                    if self.__encoder_two and hasattr(self.__encoder_two, "target_bitrate"):
+                            self.__encoder_two.target_bitrate=bitrate
                     # 更新pacer速率
-                    pacing_rate=(1.5*bitrate)/1024
+                    pacing_rate=(2.5*bitrate)/1024
                     self.pace_sender.set_pacing_rates(pacing_rate,0)# kbps
                     self.__log_debug(
                         "BWE | receiver estimated maximum bitrate Target bitrate:%d bps,encode bitrate:%d,pacing bitrate:%d", bitrate,self.__encoder.target_bitrate,pacing_rate
@@ -359,7 +362,9 @@ class RTCRtpSender():
             # 组装RtpPacketToSend并入队
             self.pace_sender.enqueue_packets(packets)
     def _recv_keyframe_finished(self)->None:
-        self.encode_mode.transition()#转换到S3：关键帧传输完成
+        # if self._data.index>1:
+        #     self.encode_mode.transition("S3")#转换到S3：关键帧传输完成
+        logger.info("Render encode_mode: {0},Number:{1}".format(self.encode_mode.current_state,self._data.index))
     def _send_keyframe(self) -> None:
         """
         Request the next frame to be a keyframe.
@@ -518,13 +523,13 @@ class RTCRtpSender():
                 self._data = await self.__track.recv()
                 queue_time=self.pace_sender.expected_queue_time()
                 # self.__log_debug('[FRAME_INFO] Number: %d, PTS: %d, queue_time: %d ms', frame_number,timestamp, queue_time.total_seconds()*1000)
-                if self._data.index%10==0 and self._data.index>=10:
-                        self.encode_mode.transition()#转换到S1:出现关键帧
+                if self._data.index%50==0 and self._data.index>=50:
+                        self.encode_mode.transition("S1")#转换到S1:出现关键帧
                         self.encode_role_forwart=not self.encode_role_forwart
-                if self._data.index%10==1 and self._data.index>=10:
-                    self.encode_mode.transition()#转换到S2：一张关键帧编码完成开始传输
-                # if  self._data.index%10==5 and self._data.index>=10:
-                #     self.encode_mode.transition()#转换到S3：关键帧传输完成
+                if self._data.index%50==1 and self._data.index>=50:
+                    self.encode_mode.transition("S2")#转换到S2：一张关键帧编码完成开始传输
+                if  self._data.index%50==5 and self._data.index>=50:
+                    self.encode_mode.transition("S3")#转换到S3：关键帧传输完成
                
                 # 对于正常P帧编码的stream，正常传输直到编码器停止返回None
                 # if not self.condition_Finish_event.is_set() and enc_frame:
@@ -558,8 +563,11 @@ class RTCRtpSender():
                         packet.set_first_packet_of_frame(i==0)
                         if frame_type.value==0 or frame_type.value==4:
                             packet.set_is_key_frame(True)
+                            if self.encode_mode.current_state=="S1":
+                                packet.set_is_force_key(True)
                         else:
                             packet.set_is_key_frame(False)
+                        
                         #================================================================================================
 
                         # packet.ssrc = self._ssrc
@@ -627,8 +635,11 @@ class RTCRtpSender():
                         packet.set_first_packet_of_frame(i==0)
                         if frame_type.value==0 or frame_type.value==4:
                             packet.set_is_key_frame(True)
+                            if self.encode_mode.current_state=="S1":
+                                packet.set_is_force_key(True)
                         else:
                             packet.set_is_key_frame(False)
+                        
                         #===============================================================================================
                         # packet.ssrc = self._ssrc
                         # packet.payload = payload
@@ -670,7 +681,7 @@ class RTCRtpSender():
                 # 计算发送速率
                 if self.timestamp-self.last_timestamp>1000:
                     self.send_rate=((self.__octet_count-self.last_octet)*8)/((self.timestamp-self.last_timestamp)/1000)
-                    self.__log_debug('[Send_INFO] timestamp: %d, send_rate: %f bps, packet_count: %d', self.timestamp,self.send_rate, self.__packet_count-self.last_count)
+                    self.__log_debug('[Send_INFO] timestamp: %d, send_rate: %f bps, packet_count: %d,target_bitrate: %d bps', self.timestamp,self.send_rate, self.__packet_count-self.last_count,self.__encoder.target_bitrate)
                     self.last_octet=self.__octet_count
                     self.last_timestamp=self.timestamp
                     self.last_count=self.__packet_count

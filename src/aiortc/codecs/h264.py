@@ -1,476 +1,625 @@
+import asyncio
+import errno
 import fractions
 import logging
-import math
-from itertools import tee
-from struct import pack, unpack_from
-from typing import Iterator, List, Optional, Sequence, Tuple, Type, TypeVar
-from enum import Enum
+import threading
+import time
+from typing import Dict, Optional, Set, Union
 
 import av
+import cv2
+from av import AudioFrame, VideoFrame
+from av.audio import AudioStream
 from av.frame import Frame
 from av.packet import Packet
+from av.video.stream import VideoStream
 
-from ..jitterbuffer import JitterFrame
-from ..mediastreams import VIDEO_TIME_BASE, convert_timebase
-from .base import Decoder, Encoder
-
+from ..mediastreams import AUDIO_PTIME, MediaStreamError, MediaStreamTrack
 logger = logging.getLogger(__name__)
 
-DEFAULT_BITRATE = 1000000  # 3000 kbps
-MIN_BITRATE = 100000  # 500 kbps
-MAX_BITRATE = 3000000  # 3 Mbps
-
-MAX_FRAME_RATE = 30
-PACKET_MAX = 1300
-
-NAL_TYPE_FU_A = 28
-NAL_TYPE_STAP_A = 24
-
-NAL_HEADER_SIZE = 1
-FU_A_HEADER_SIZE = 2
-LENGTH_FIELD_SIZE = 2
-STAP_A_HEADER_SIZE = NAL_HEADER_SIZE + LENGTH_FIELD_SIZE
-
-DESCRIPTOR_T = TypeVar("DESCRIPTOR_T", bound="H264PayloadDescriptor")
-T = TypeVar("T")
-
-
- 
-
-class NalUnitType(Enum):
-    NAL_UNKNOWN = 0
-    NAL_SLICE = 1
-    NAL_SLICE_DPA = 2
-    NAL_SLICE_DPB = 3
-    NAL_SLICE_DPC = 4
-    NAL_SLICE_IDR = 5
-    NAL_SEI = 6
-    NAL_SPS = 7
-    NAL_PPS = 8
+REAL_TIME_FORMATS = [
+    "alsa",
+    "android_camera",
+    "avfoundation",
+    "bktr",
+    "decklink",
+    "dshow",
+    "fbdev",
+    "gdigrab",
+    "iec61883",
+    "jack",
+    "kmsgrab",
+    "openal",
+    "oss",
+    "pulse",
+    "sndio",
+    "rtsp",
+    "v4l2",
+    "vfwcap",
+    "x11grab",
+]
 
 
-class Frametype(Enum):
-    FRAME_I = 0
-    FRAME_P = 1
-    FRAME_B = 2
-    SEI = 3  # 新增 SEI 常量
-    SPS = 4  # 新增 SPS 常量
-    PPS = 5  # 新增 PPS 常量 
-class Bitstream:
-    def __init__(self, p_data):
-        self.p_start = p_data
-        self.p = 0
-        self.p_end = self.p + len(p_data)
-        self.i_left = 8
-    def bs_read(self, i_count):
-        i_mask = [0x00, 0x01, 0x03, 0x07, 0x0f, 0x1f, 0x3f, 0x7f,
-                 0xff, 0x1ff, 0x3ff, 0x7ff, 0xfff, 0x1fff, 0x3fff,
-                 0x7fff, 0xffff, 0x1ffff, 0x3ffff, 0x7ffff, 0xfffff,
-                 0x1fffff, 0x3fffff, 0x7fffff, 0xffffff, 0x1ffffff,
-                 0x3ffffff, 0x7ffffff, 0xfffffff, 0x1fffffff, 0x3fffffff,
-                 0x7fffffff, 0xffffffff]
-
-        i_result = 0
-
-        while i_count > 0:
-            if self.p >= self.p_end:
-                break
-
-            i_shr = self.i_left - i_count
-
-            if i_shr >= 0:
-                i_result |= (self.p >> i_shr) & i_mask[i_count]
-                self.i_left -= i_count
-
-                if self.i_left == 0:
-                    self.p += 1
-                    self.i_left = 8
-
-                return i_result
-            else:
-                i_result |= (self.p & i_mask[self.i_left]) << -i_shr
-                i_count -= self.i_left
-                self.p += 1
-                self.i_left = 8
-
-        return i_result
-
-    def bs_read1(self):
-        if self.p < self.p_end:
-            i_result = (self.p >> (self.i_left - 1)) & 0x01
-            self.i_left -= 1
-
-            if self.i_left == 0:
-                self.p += 1
-                self.i_left = 8
-
-            return i_result
-        return 0
-    def bs_read_ue(s):
-        i = 0
-
-        while s.bs_read1() == 0 and s.p < s.p_end and i < 32:
-            i += 1
-
-        return (1 << i) - 1 + s.bs_read(i)
-
-
-def pairwise(iterable: Sequence[T]) -> Iterator[Tuple[T, T]]:
-    a, b = tee(iterable)
-    next(b, None)
-    return zip(a, b)
-
-
-class H264PayloadDescriptor:
-    def __init__(self, first_fragment):
-        self.first_fragment = first_fragment
-
-    def __repr__(self):
-        return f"H264PayloadDescriptor(FF={self.first_fragment})"
-
-    @classmethod
-    def parse(cls: Type[DESCRIPTOR_T], data: bytes) -> Tuple[DESCRIPTOR_T, bytes]:
-        output = bytes()
-
-        # NAL unit header
-        if len(data) < 2:
-            raise ValueError("NAL unit is too short")
-        nal_type = data[0] & 0x1F
-        f_nri = data[0] & (0x80 | 0x60)
-        pos = NAL_HEADER_SIZE
-
-        if nal_type in range(1, 24):
-            # single NAL unit
-            output = bytes([0, 0, 0, 1]) + data
-            obj = cls(first_fragment=True)
-        elif nal_type == NAL_TYPE_FU_A:
-            # fragmentation unit
-            original_nal_type = data[pos] & 0x1F
-            first_fragment = bool(data[pos] & 0x80)
-            pos += 1
-
-            if first_fragment:
-                original_nal_header = bytes([f_nri | original_nal_type])
-                output += bytes([0, 0, 0, 1])
-                output += original_nal_header
-            output += data[pos:]
-
-            obj = cls(first_fragment=first_fragment)
-        elif nal_type == NAL_TYPE_STAP_A:
-            # single time aggregation packet
-            offsets = []
-            while pos < len(data):
-                if len(data) < pos + LENGTH_FIELD_SIZE:
-                    raise ValueError("STAP-A length field is truncated")
-                nalu_size = unpack_from("!H", data, pos)[0]
-                pos += LENGTH_FIELD_SIZE
-                offsets.append(pos)
-
-                pos += nalu_size
-                if len(data) < pos:
-                    raise ValueError("STAP-A data is truncated")
-
-            offsets.append(len(data) + LENGTH_FIELD_SIZE)
-            for start, end in pairwise(offsets):
-                end -= LENGTH_FIELD_SIZE
-                output += bytes([0, 0, 0, 1])
-                output += data[start:end]
-
-            obj = cls(first_fragment=True)
-        else:
-            raise ValueError(f"NAL unit type {nal_type} is not supported")
-
-        return obj, output
-
-
-class H264Decoder(Decoder):
-    def __init__(self) -> None:
-        self.codec = av.CodecContext.create("h264", "r")
-
-    def decode(self, encoded_frame: JitterFrame) -> List[Frame]:
+async def blackhole_consume(track):
+    while True:
         try:
-            packet = av.Packet(encoded_frame.data)
-            packet.pts = encoded_frame.timestamp
-            packet.time_base = VIDEO_TIME_BASE
-            frames = self.codec.decode(packet)
-        except av.AVError as e:
-            logger.warning(
-                "H264Decoder() failed to decode, skipping package: " + str(e)
-            )
-            return []
-
-        return frames
-
-"""初始化编码器"""
-
-       
-def create_encoder_context(
-    codec_name: str, width: int, height: int, bitrate: int
-) -> Tuple[av.CodecContext, bool]:
-    
-    # av.VideoCodecContext.max_b_frames = property(lambda self: self.ptr.max_b_frames)
-    
-    codec = av.CodecContext.create(codec_name, "w")
-   
-    codec.width = width
-    codec.height = height
-    codec.bit_rate = bitrate
-    codec.pix_fmt = "yuv420p"
-    codec.framerate = fractions.Fraction(MAX_FRAME_RATE, 1)
-    codec.time_base = fractions.Fraction(1, MAX_FRAME_RATE)
-    codec.options = {
-        "profile": "main",# baseline, main, high, high10, high422, high444.
-        "level": "31",
-        "tune": "zerolatency",  # does nothing using h264_omx
-    }
-    codec.gop_size = 99999  # GOP (Group of Pictures) 大小
-    # codec.qmin = 30  # 最小量化器
-    # codec.qmax = 51  # 最大量化器
-    # codec.has_b_frames =True
-    # codec.max_b_frames = 1  # 最大 B 帧数
-    # codec.global_quality = 10  # 全局质量
-    codec.open()
-    return codec, codec_name == "h264_omx"
+            await track.recv()
+        except MediaStreamError:
+            return
 
 
-class H264Encoder(Encoder):
-    def __init__(self) -> None:
-        self.buffer_data = b""
-        self.buffer_pts: Optional[int] = None
-        self.codec: Optional[av.CodecContext] = None
-        self.codec_buffering = False
-        self.__target_bitrate = DEFAULT_BITRATE
-        self.frame_size=0
+class MediaBlackhole:
+    """
+    A media sink that consumes and discards all media.
+    """
 
-    @staticmethod
-    def _packetize_fu_a(data: bytes) -> List[bytes]:
-        available_size = PACKET_MAX - FU_A_HEADER_SIZE
-        payload_size = len(data) - NAL_HEADER_SIZE
-        num_packets = math.ceil(payload_size / available_size)
-        num_larger_packets = payload_size % num_packets
-        package_size = payload_size // num_packets
+    def __init__(self):
+        self.__tracks = {}
 
-        f_nri = data[0] & (0x80 | 0x60)  # fni of original header
-        nal = data[0] & 0x1F
+    def addTrack(self, track):
+        """
+        Add a track whose media should be discarded.
 
-        fu_indicator = f_nri | NAL_TYPE_FU_A
+        :param track: A :class:`aiortc.MediaStreamTrack`.
+        """
+        if track not in self.__tracks:
+            self.__tracks[track] = None
 
-        fu_header_end = bytes([fu_indicator, nal | 0x40])
-        fu_header_middle = bytes([fu_indicator, nal])
-        fu_header_start = bytes([fu_indicator, nal | 0x80])
-        fu_header = fu_header_start
+    async def start(self):
+        """
+        Start discarding media.
+        """
+        for track, task in self.__tracks.items():
+            if task is None:
+                self.__tracks[track] = asyncio.ensure_future(blackhole_consume(track))
 
-        packages = []
-        offset = NAL_HEADER_SIZE
-        while offset < len(data):
-            if num_larger_packets > 0:
-                num_larger_packets -= 1
-                payload = data[offset : offset + package_size + 1]
-                offset += package_size + 1
-            else:
-                payload = data[offset : offset + package_size]
-                offset += package_size
+    async def stop(self):
+        """
+        Stop discarding media.
+        """
+        for task in self.__tracks.values():
+            if task is not None:
+                task.cancel()
+        self.__tracks = {}
 
-            if offset == len(data):
-                fu_header = fu_header_end
+#用于播放媒体流的工作线程
+def player_worker_decode(
+    loop,
+    container,
+    streams,
+    audio_track,
+    video_track,
+    quit_event,
+    throttle_playback,
+    loop_playback,
+):
+    #设置音频相关的参数
+    audio_sample_rate = 48000
+    audio_samples = 0
+    audio_time_base = fractions.Fraction(1, audio_sample_rate)
+    #初始化音频重采样器
+    audio_resampler = av.AudioResampler(
+        format="s16",
+        layout="stereo",
+        rate=audio_sample_rate,
+        frame_size=int(audio_sample_rate * AUDIO_PTIME),
+    )
 
-            packages.append(fu_header + payload)
+    video_first_pts = None #记录视频第一帧的 PTS，用于修正后续视频帧的 PTS
 
-            fu_header = fu_header_middle
-        assert offset == len(data), "incorrect fragment data"
-
-        return packages
-
-    @staticmethod # 
-    def _packetize_stap_a(
-        data: bytes, packages_iterator: Iterator[bytes]
-    ) -> Tuple[bytes, bytes]:
-        counter = 0
-        available_size = PACKET_MAX - STAP_A_HEADER_SIZE
-
-        stap_header = NAL_TYPE_STAP_A | (data[0] & 0xE0)
-
-        payload = bytes()
+    frame_time = None
+    start_time = time.time()
+    while not quit_event.is_set(): #从媒体容器中逐帧解码音频和视频
         try:
-            nalu = data  # with header
-            while len(nalu) <= available_size and counter < 9:
-                stap_header |= nalu[0] & 0x80
+            frame = next(container.decode(*streams))
+        except Exception as exc:
+            if isinstance(exc, av.FFmpegError) and exc.errno == errno.EAGAIN:
+                time.sleep(0.01)
+                continue
+            if isinstance(exc, StopIteration) and loop_playback:
+                container.seek(0)
+                continue
+            if audio_track:
+                asyncio.run_coroutine_threadsafe(audio_track._queue.put(None), loop)
+            if video_track:
+                asyncio.run_coroutine_threadsafe(video_track._queue.put(None), loop)
+            break
 
-                nri = nalu[0] & 0x60
-                if stap_header & 0x60 < nri:
-                    stap_header = stap_header & 0x9F | nri
+        # read up to 1 second ahead 如果启用节流播放，根据已经过的时间和当前帧的时间戳进行休眠，控制播放速度。
+        if throttle_playback:
+            elapsed_time = time.time() - start_time
+            if frame_time and frame_time > elapsed_time + 1:
+                time.sleep(0.1)
 
-                available_size -= LENGTH_FIELD_SIZE + len(nalu)
-                counter += 1
-                payload += pack("!H", len(nalu)) + nalu
-                nalu = next(packages_iterator)
+        if isinstance(frame, AudioFrame) and audio_track: #将解码后的音频帧通过 audio_track._queue.put(frame) 放入音频轨道的队列中。
+            for frame in audio_resampler.resample(frame):
+                # fix timestamps
+                frame.pts = audio_samples
+                frame.time_base = audio_time_base
+                audio_samples += frame.samples
 
-            if counter == 0:
-                nalu = next(packages_iterator)
-        except StopIteration:
-            nalu = None
-
-        if counter <= 1:
-            return data, nalu
-        else:
-            return bytes([stap_header]) + payload, nalu
-    """用于拆分 H.264 编码的比特流（bitstream）中的不同 NAL 单元"""
-    @staticmethod
-    def _split_bitstream(buf: bytes) -> Iterator[bytes]:
-        # Translated from: https://github.com/aizvorski/h264bitstream/blob/master/h264_nal.c#L134
-        i = 0
-        while True:
-            # Find the start of the NAL unit.
-            #
-            # NAL Units start with the 3-byte start code 0x000001 or
-            # the 4-byte start code 0x00000001.  # 查找 NAL 单元的开始码
-            i = buf.find(b"\x00\x00\x01", i)
-            if i == -1: # 如果没有找到，结束函数
-                return
-
-            # Jump past the start code
-            i += 3
-            nal_start = i
-
-            # Find the end of the NAL unit (end of buffer OR next start code) # 查找 NAL 单元的结束码（下一个开始码或数据末尾）
-            i = buf.find(b"\x00\x00\x01", i)
-            if i == -1:# 如果没有找到下一个开始码，返回当前开始码到数据末尾的部分
-                yield buf[nal_start : len(buf)]
-                return
-            elif buf[i - 1] == 0:
-                # 4-byte start code case, jump back one byte
-                yield buf[nal_start : i - 1]# 如果是 4 字节的开始码，回退一字节
-            else:
-                yield buf[nal_start:i] # 返回当前开始码到下一个开始码之前的部分
-
-    @classmethod #用于将给定的数据包（每个经过H264编码后的NAL单元）进行分片
-    def _packetize(cls, packages: Iterator[bytes]) -> Tuple[List[bytes],bytes]:
-        packetized_packages = []
-
-        packages_iterator = iter(packages)
-        package = next(packages_iterator, None)#获取生成器中下一个编码后的NAL单元数据
-        package_nal=package
-        while package is not None:
-            if len(package) > PACKET_MAX:#如果超过了一个Packet，用_packetize_fu_a将NAL单元分成多个FU-A
-                packetized_packages.extend(cls._packetize_fu_a(package))
-                package = next(packages_iterator, None)
-            else:#否则用_packetize_stap_a方法将多个小的NAL单元打包成一个STAP-A
-                packetized, package = cls._packetize_stap_a(package, packages_iterator)
-                packetized_packages.append(packetized)
-
-        return packetized_packages,package_nal #Packet列表
-    """生成器"""
-    def _encode_frame(
-        self, frame: av.VideoFrame, force_keyframe: bool
-    ) -> Iterator[bytes]:
-        """检查帧尺寸和比特率是否与先前的编码器匹配：如果尺寸不一致或比特率变化超过10%，重新初始化编码器"""
-        if self.codec and (
-            frame.width != self.codec.width
-            or frame.height != self.codec.height
-            # we only adjust bitrate if it changes by over 10%
-            or abs(self.target_bitrate - self.codec.bit_rate) / self.codec.bit_rate
-            > 0.1
-        ):
-            self.buffer_data = b""
-            self.buffer_pts = None
-            self.codec = None
-        """是否需要强制生成关键帧"""
-        if force_keyframe:
-            # force a complete image
-            frame.pict_type = av.video.frame.PictureType.I
-        else:
-            # reset the picture type, otherwise no B-frames are produced
-            frame.pict_type = av.video.frame.PictureType.NONE
-        """如果编码器未初始化：初始化编码器"""
-        if self.codec is None:
-            try:
-                self.codec, self.codec_buffering = create_encoder_context(
-                    "libx264",
-                    frame.width,
-                    frame.height,
-                    bitrate=self.target_bitrate,
+                frame_time = frame.time
+                asyncio.run_coroutine_threadsafe(audio_track._queue.put(frame), loop)
+        elif isinstance(frame, VideoFrame) and video_track: #将解码后的视频帧通过 video_track._queue.put(frame) 放入视频轨道的队列中。
+            if frame.pts is None:  # pragma: no cover
+                logger.warning(
+                    "MediaPlayer(%s) Skipping video frame with no pts", container.name
                 )
-                logger.info("Encodec | Frame height: {0} ,width: {1}".format(frame.height,frame.width))
-            except Exception:
-                logger.error("libx264 error")
-        """循环编码"""
-        data_to_send = b""
-        for package in self.codec.encode(frame):
-            package_bytes = bytes(package)
-            if self.codec_buffering:#如果有buffer缓冲区：延迟发送以确保累计所有给定PTS的数据
-                # delay sending to ensure we accumulate all packages
-                # for a given PTS
-                if package.pts == self.buffer_pts:
-                    self.buffer_data += package_bytes
-                else:
-                    data_to_send += self.buffer_data
-                    self.buffer_data = package_bytes
-                    self.buffer_pts = package.pts
+                continue
+
+            # video from a webcam doesn't start at pts 0, cancel out offset
+            if video_first_pts is None:
+                video_first_pts = frame.pts
+            frame.pts -= video_first_pts
+
+            frame_time = frame.time
+         
+            asyncio.run_coroutine_threadsafe(video_track._queue.put(frame), loop)
+
+#从媒体容器中解封装（demux）媒体包，并将其放入相应的音频和视频轨道队列中，以供后续解码和播放
+def player_worker_demux(
+    loop,
+    container,
+    streams,
+    audio_track,
+    video_track,
+    quit_event,
+    throttle_playback,
+    loop_playback,
+):
+    video_first_pts = None
+    frame_time = None
+    start_time = time.time()
+
+    while not quit_event.is_set():
+        try:
+            packet = next(container.demux(*streams))
+            if not packet.size:
+                raise StopIteration
+        except Exception as exc:
+            if isinstance(exc, av.FFmpegError) and exc.errno == errno.EAGAIN:
+                time.sleep(0.01)
+                continue
+            if isinstance(exc, StopIteration) and loop_playback:
+                container.seek(0)
+                continue
+            if audio_track:
+                asyncio.run_coroutine_threadsafe(audio_track._queue.put(None), loop)
+            if video_track:
+                asyncio.run_coroutine_threadsafe(video_track._queue.put(None), loop)
+            break
+
+        # read up to 1 second ahead
+        if throttle_playback:
+            elapsed_time = time.time() - start_time
+            if frame_time and frame_time > elapsed_time + 1:
+                time.sleep(0.1)
+
+        track = None
+        if isinstance(packet.stream, AudioStream) and audio_track:
+            track = audio_track
+        elif isinstance(packet.stream, VideoStream) and video_track:
+            if packet.pts is None:  # pragma: no cover
+                logger.warning(
+                    "MediaPlayer(%s) Skipping video packet with no pts", container.name
+                )
+                continue
+            track = video_track
+
+            # video from a webcam doesn't start at pts 0, cancel out offset
+            if video_first_pts is None:
+                video_first_pts = packet.pts
+            packet.pts -= video_first_pts
+
+        if (
+            track is not None
+            and packet.pts is not None
+            and packet.time_base is not None
+        ):
+            frame_time = int(packet.pts * packet.time_base)
+            asyncio.run_coroutine_threadsafe(track._queue.put(packet), loop)
+
+
+class  PlayerStreamTrack(MediaStreamTrack):
+    def __init__(self, player, kind):
+        super().__init__()
+        self.kind = kind
+        self._player = player
+        self._queue = asyncio.Queue()
+        self._start = None
+    async def recv(self) -> Union[Frame, Packet]:#获取媒体流中的数据进行编码
+        if self.readyState != "live":
+            raise MediaStreamError
+
+        self._player._start(self)
+        data = await self._queue.get()#获取一帧数据VideoFrame
+        if data is None:
+            self.stop()
+            raise MediaStreamError
+        if isinstance(data, Frame):
+            data_time = data.time
+            image = data.to_ndarray(format="bgr24")
+            # cv2.imshow("SendVideo", image)
+            # cv2.waitKey(1)
+        elif isinstance(data, Packet):
+            data_time = float(data.pts * data.time_base)
+
+        # control playback rate
+        if (
+            self._player is not None
+            and self._player._throttle_playback
+            and data_time is not None
+        ):
+            if self._start is None:
+                self._start = time.time() - data_time
             else:
-                data_to_send += package_bytes
-        self.frame_size=len(data_to_send)
-        # logger.info("Encodec | Frame  Type: {0} ,size: {1}".format(frame.pict_type,len(data_to_send)))
-        # logger.info("Encodec | Actual encode_bitrate: {0}".format(self.target_bitrate))
+                wait = self._start + data_time - time.time()
+                await asyncio.sleep(wait)
 
-        if data_to_send: #将累积的编码数据分割为较小的数据包，并通过_split_bitstream方法发送
-            yield from self._split_bitstream(data_to_send)#将 data_to_send 中经过 _split_bitstream 处理后的每个 NAL 单元的内容逐一返回给调用方
-    def get_frame_type(self,package_nal)->Frametype:
-        # 获取NAL单元的类型
-        cNalu =hex(package_nal[0])
-        nal_unit_type = int(hex((package_nal[0]) & 0x1F),16)
-        s=Bitstream(package_nal)
-        if nal_unit_type == NalUnitType.NAL_SLICE.value or nal_unit_type == NalUnitType.NAL_SLICE_IDR.value:
-            s.bs_read_ue()  # i_first_mb
-            frame_type = s.bs_read_ue()  # picture type
-            if frame_type in [0, 5]:
-                frametype = Frametype.FRAME_P
-            elif frame_type in [1, 6]:
-                frametype = Frametype.FRAME_B
-            elif frame_type in [3, 8]:
-                frametype = Frametype.FRAME_P
-            elif frame_type in [2, 7]:
-                frametype = Frametype.FRAME_I
-            elif frame_type in [4, 9]:
-                frametype = Frametype.FRAME_I
-                I_Frame_Num += 1
-        elif nal_unit_type == NalUnitType.NAL_SEI.value:
-            frametype = Frametype.SEI
-        elif nal_unit_type == NalUnitType.NAL_SPS.value:
-            frametype = Frametype.SPS
-        elif nal_unit_type == NalUnitType.NAL_PPS.value:
-            frametype = Frametype.PPS
-        # logger.info("Encodec | Nal_unit_type: {0} Frame type ==============={1} ".format(nal_unit_type,frametype.name))
-        return frametype
-    def encode(
-        self, frame: Frame, force_keyframe: bool = False
-    ) -> Tuple[List[bytes], int]:
-        assert isinstance(frame, av.VideoFrame)
-        packages = self._encode_frame(frame, force_keyframe) #返回生成器
-        timestamp = convert_timebase(frame.pts, frame.time_base, VIDEO_TIME_BASE)
-        packages_packetize,package_nal=self._packetize(packages)
-        frametype=self.get_frame_type(package_nal)
-        
-        return packages_packetize, timestamp ,frametype,self.frame_size#返回编码打包后的packet列表和时间戳
+        return data
 
-    def pack(self, packet: Packet) -> Tuple[List[bytes], int]:
-        assert isinstance(packet, av.Packet)
-        packages = self._split_bitstream(bytes(packet))
-        timestamp = convert_timebase(packet.pts, packet.time_base, VIDEO_TIME_BASE)
-        return self._packetize(packages), timestamp
+    def stop(self):
+        super().stop()
+        if self._player is not None:
+            self._player._stop(self)
+            self._player = None
+
+#从文件或其他媒体源中读取音频和/或视频
+class MediaPlayer:
+    """
+    A media source that reads audio and/or video from a file.
+
+    Examples:
+
+    .. code-block:: python
+
+        # Open a video file.
+        player = MediaPlayer('/path/to/some.mp4')
+
+        # Open an HTTP stream.
+        player = MediaPlayer(
+            'http://download.tsi.telecom-paristech.fr/'
+            'gpac/dataset/dash/uhd/mux_sources/hevcds_720p30_2M.mp4')
+
+        # Open webcam on Linux.
+        player = MediaPlayer('/dev/video0', format='v4l2', options={
+            'video_size': '640x480'
+        })
+
+        # Open webcam on OS X.
+        player = MediaPlayer('default:none', format='avfoundation', options={
+            'video_size': '640x480'
+        })
+
+        # Open webcam on Windows.
+        player = MediaPlayer('video=Integrated Camera', format='dshow', options={
+            'video_size': '640x480'
+        })
+
+    :param file: The path to a file, or a file-like object.
+    :param format: The format to use, defaults to autodect.
+    :param options: Additional options to pass to FFmpeg.
+    :param timeout: Open/read timeout to pass to FFmpeg.
+    :param loop: Whether to repeat playback indefinitely (requires a seekable file).
+    """
+
+    def __init__(
+        self, file, format=None, options=None, timeout=None, loop=False, decode=True
+    ):
+        self.__container = av.open( #打开媒体文件，并检查其中的音频和视频流
+            file=file, format=format, mode="r", options=options, timeout=timeout
+        )
+        self.__thread: Optional[threading.Thread] = None
+        self.__thread_quit: Optional[threading.Event] = None
+
+        # examine streams
+        self.__started: Set[PlayerStreamTrack] = set()
+        self.__streams = []
+        # self.__videostream=Optional[VideoStream] = None
+        # self.__audiostream=Optional[AudioStream] = None
+        self.__decode = decode
+        self.__audio: Optional[PlayerStreamTrack] = None
+        self.__video: Optional[PlayerStreamTrack] = None
+        for stream in self.__container.streams:
+            if stream.type == "audio" and not self.__audio:
+                # self.__audiostream=stream
+                if self.__decode:
+                    self.__audio = PlayerStreamTrack(self, kind="audio")
+                    self.__streams.append(stream)
+                elif stream.codec_context.name in ["opus", "pcm_alaw", "pcm_mulaw"]:
+                    self.__audio = PlayerStreamTrack(self, kind="audio")
+                    self.__streams.append(stream)
+            elif stream.type == "video" and not self.__video:
+                # self.__videostream=stream
+                if self.__decode:
+                    self.__video = PlayerStreamTrack(self, kind="video")
+                    self.__streams.append(stream)
+                elif stream.codec_context.name in ["h264", "vp8"]:
+                    self.__video = PlayerStreamTrack(self, kind="video")
+                    self.__streams.append(stream)
+
+        # check whether we need to throttle playback
+        container_format = set(self.__container.format.name.split(","))
+        self._throttle_playback = not container_format.intersection(REAL_TIME_FORMATS) #检查是否需要节流播放
+
+        # check whether the looping is supported
+        assert (
+            not loop or self.__container.duration is not None
+        ), "The `loop` argument requires a seekable file"
+        self._loop_playback = loop #检查是否支持循环播放
+        # 禁用音频编码
+        self.__audio=None
 
     @property
-    def target_bitrate(self) -> int:
+    def audio(self) -> MediaStreamTrack:
         """
-        Target bitrate in bits per second.
+        A :class:`aiortc.MediaStreamTrack` instance if the file contains audio.
         """
-        return self.__target_bitrate
-    # 如何调节目标比特率
-    @target_bitrate.setter
-    def target_bitrate(self, bitrate: int) -> None:
-        bitrate = max(MIN_BITRATE, min(bitrate, MAX_BITRATE))
-        self.__target_bitrate = bitrate
+        return self.__audio
+    #返回包含视频的 MediaStreamTrack 实例
+    @property
+    def video(self) -> MediaStreamTrack:
+        """
+        A :class:`aiortc.MediaStreamTrack` instance if the file contains video.
+        """
+        return self.__video
+    # @property
+    # def videostream(self) -> VideoStream:
+    #     return self.__videostream
+    # @property
+    # def audiostream(self) -> AudioStream:
+    #     return self.__audiostream
+    # @property
+    # def stream(self) -> List[MediaStream]:
+    #     return self.__streams
+    def _start(self, track: PlayerStreamTrack) -> None:
+        self.__started.add(track) #将调用该方法的 PlayerStreamTrack 实例添加到 __started 集合中，以追踪已经启动的 PlayerStreamTrack
+        if self.__thread is None: #启动一个新的工作线程
+            self.__log_debug("Starting worker thread")
+            self.__thread_quit = threading.Event()
+            self.__thread = threading.Thread(
+                name="media-player",
+                target=player_worker_decode if self.__decode else player_worker_demux,
+                args=(
+                    asyncio.get_event_loop(),
+                    self.__container,
+                    self.__streams,
+                    self.__audio,
+                    self.__video,
+                    self.__thread_quit,
+                    self._throttle_playback,
+                    self._loop_playback,
+                ),
+            )
+            self.__thread.start()
+
+    def _stop(self, track: PlayerStreamTrack) -> None:
+        self.__started.discard(track)
+
+        if not self.__started and self.__thread is not None:
+            self.__log_debug("Stopping worker thread")
+            self.__thread_quit.set()
+            self.__thread.join()
+            self.__thread = None
+
+        if not self.__started and self.__container is not None:
+            self.__container.close()
+            self.__container = None
+
+    def __log_debug(self, msg: str, *args) -> None:
+        logger.debug(f"MediaPlayer(%s) {msg}", self.__container.name, *args)
 
 
-def h264_depayload(payload: bytes) -> bytes:
-    descriptor, data = H264PayloadDescriptor.parse(payload)
-    return data
+class MediaRecorderContext:
+    def __init__(self, stream):
+        self.started = False
+        self.stream = stream
+        self.task = None
+
+
+class MediaRecorder:
+    """
+    A media sink that writes audio and/or video to a file.
+
+    Examples:
+
+    .. code-block:: python
+
+        # Write to a video file.
+        player = MediaRecorder('/path/to/file.mp4')
+
+        # Write to a set of images.
+        player = MediaRecorder('/path/to/file-%3d.png')
+
+    :param file: The path to a file, or a file-like object.
+    :param format: The format to use, defaults to autodect.
+    :param options: Additional options to pass to FFmpeg.
+    """
+
+    def __init__(self, file, format=None, options=None):
+        self.__container = av.open(file=file, format=format, mode="w", options=options)
+        self.__tracks = {}
+
+    def addTrack(self, track):
+        """
+        Add a track to be recorded.
+
+        :param track: A :class:`aiortc.MediaStreamTrack`.
+        """
+        if track.kind == "audio":
+            if self.__container.format.name in ("wav", "alsa", "pulse"):
+                codec_name = "pcm_s16le"
+            elif self.__container.format.name == "mp3":
+                codec_name = "mp3"
+            else:
+                codec_name = "aac"
+            stream = self.__container.add_stream(codec_name)
+        else:
+            if self.__container.format.name == "image2":
+                stream = self.__container.add_stream("png", rate=30)
+                stream.pix_fmt = "rgb24"
+            else:
+                stream = self.__container.add_stream("libx264", rate=30)
+                stream.pix_fmt = "yuv420p"
+        self.__tracks[track] = MediaRecorderContext(stream) #记录一路视频流
+
+    async def start(self):
+        """
+        Start recording.
+        """
+        for track, context in self.__tracks.items():#遍历一路视频流
+            if context.task is None:
+                context.task = asyncio.ensure_future(self.__run_track(track, context)) #异步运行每个轨道的录制任务
+
+    async def stop(self):
+        """
+        Stop recording.
+        """
+        if self.__container:
+            for track, context in self.__tracks.items():
+                if context.task is not None:
+                    context.task.cancel()
+                    context.task = None
+                    for packet in context.stream.encode(None):
+                        self.__container.mux(packet)
+            self.__tracks = {}
+
+            if self.__container:
+                self.__container.close()
+                self.__container = None
+    # 执行每个轨道的录制任务
+    async def __run_track(self, track: MediaStreamTrack, context: MediaRecorderContext):
+        while True:
+            try:
+                frame = await track.recv() #从音频/视频轨道接收帧
+            except MediaStreamError:
+                return
+            
+            if not context.started:
+                # adjust the output size to match the first frame
+                if isinstance(frame, VideoFrame):
+                    context.stream.width = frame.width
+                    context.stream.height = frame.height
+                context.started = True
+            # 实时渲染播放接收视频
+            image = frame.to_ndarray(format="bgr24")
+            # cv2.imshow("RecvVideo", image)
+            # cv2.waitKey(1)
+            for packet in context.stream.encode(frame):#编码帧并获取编码数据
+                self.__container.mux(packet) #将编码数据写入容器
+
+#用于在媒体轨道之间进行中继传输
+class RelayStreamTrack(MediaStreamTrack):
+    def __init__(self, relay, source: MediaStreamTrack, buffered: bool) -> None:
+        super().__init__()
+        self.kind = source.kind
+        self._relay = relay
+        self._source: Optional[MediaStreamTrack] = source
+        self._buffered = buffered
+
+        self._frame: Optional[Frame] = None
+        self._queue: Optional[asyncio.Queue[Optional[Frame]]] = None
+        self._new_frame_event: Optional[asyncio.Event] = None
+
+        if self._buffered:
+            self._queue = asyncio.Queue()
+        else:
+            self._new_frame_event = asyncio.Event()
+
+    async def recv(self):
+        if self.readyState != "live":
+            raise MediaStreamError
+
+        self._relay._start(self)
+
+        if self._buffered:
+            self._frame = await self._queue.get()
+        else:
+            await self._new_frame_event.wait()
+            self._new_frame_event.clear()
+
+        if self._frame is None:
+            self.stop()
+            raise MediaStreamError
+        return self._frame
+
+    def stop(self):
+        super().stop()
+        if self._relay is not None:
+            self._relay._stop(self)
+            self._relay = None
+            self._source = None
+
+
+class MediaRelay:
+    """
+    A media source that relays one or more tracks to multiple consumers.
+
+    This is especially useful for live tracks such as webcams or media received
+    over the network.
+    """
+
+    def __init__(self) -> None:
+        self.__proxies: Dict[MediaStreamTrack, Set[RelayStreamTrack]] = {}
+        self.__tasks: Dict[MediaStreamTrack, asyncio.Future[None]] = {}
+
+    def subscribe(
+        self, track: MediaStreamTrack, buffered: bool = True
+    ) -> MediaStreamTrack:
+        """
+        Create a proxy around the given `track` for a new consumer.
+
+        :param track: Source :class:`MediaStreamTrack` which is relayed.
+        :param buffered: Whether there need a buffer between the source track and
+            relayed track.
+
+        :rtype: :class: MediaStreamTrack
+        """
+        proxy = RelayStreamTrack(self, track, buffered)
+        self.__log_debug("Create proxy %s for source %s", id(proxy), id(track))
+        if track not in self.__proxies:
+            self.__proxies[track] = set()
+        return proxy
+
+    def _start(self, proxy: RelayStreamTrack) -> None:
+        track = proxy._source
+        if track is not None and track in self.__proxies:
+            # register proxy
+            if proxy not in self.__proxies[track]:
+                self.__log_debug("Start proxy %s", id(proxy))
+                self.__proxies[track].add(proxy)
+
+            # start worker
+            if track not in self.__tasks:
+                self.__tasks[track] = asyncio.ensure_future(self.__run_track(track))
+
+    def _stop(self, proxy: RelayStreamTrack) -> None:
+        track = proxy._source
+        if track is not None and track in self.__proxies:
+            # unregister proxy
+            self.__log_debug("Stop proxy %s", id(proxy))
+            self.__proxies[track].discard(proxy)
+
+    def __log_debug(self, msg: str, *args) -> None:
+        logger.debug(f"MediaRelay(%s) {msg}", id(self), *args)
+
+    async def __run_track(self, track: MediaStreamTrack) -> None:
+        self.__log_debug("Start reading source %s" % id(track))
+
+        while True:
+            try:
+                frame = await track.recv()
+            except MediaStreamError:
+                frame = None
+            for proxy in self.__proxies[track]:
+                if proxy._buffered:
+                    proxy._queue.put_nowait(frame)
+                else:
+                    proxy._frame = frame
+                    proxy._new_frame_event.set()
+            if frame is None:
+                break
+
+        self.__log_debug("Stop reading source %s", id(track))
+        del self.__proxies[track]
+        del self.__tasks[track]
