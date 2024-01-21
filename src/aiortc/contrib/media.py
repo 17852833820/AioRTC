@@ -239,8 +239,8 @@ class  PlayerStreamTrack(MediaStreamTrack):
         if isinstance(data, Frame):
             data_time = data.time
             image = data.to_ndarray(format="bgr24")
-            # cv2.imshow("SendVideo", image)
-            # cv2.waitKey(1)
+            cv2.imshow("SendVideo", image)
+            cv2.waitKey(1)
         elif isinstance(data, Packet):
             data_time = float(data.pts * data.time_base)
 
@@ -503,8 +503,8 @@ class MediaRecorder:
                 context.started = True
             # 实时渲染播放接收视频
             image = frame.to_ndarray(format="bgr24")
-            # cv2.imshow("RecvVideo", image)
-            # cv2.waitKey(1)
+            cv2.imshow("RecvVideo", image)
+            cv2.waitKey(1)
             for packet in context.stream.encode(frame):#编码帧并获取编码数据
                 self.__container.mux(packet) #将编码数据写入容器
 

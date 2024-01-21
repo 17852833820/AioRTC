@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_BITRATE = 1000000  # 3000 kbps
 MIN_BITRATE = 100000  # 500 kbps
-MAX_BITRATE = 3000000  # 3 Mbps
+MAX_BITRATE = 3000000  # 3 Mbps 2500000
 
 MAX_FRAME_RATE = 30
 PACKET_MAX = 1300

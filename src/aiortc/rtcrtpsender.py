@@ -121,7 +121,7 @@ class RTCRtpSender():
         self._data=None
         self.__encoder_two: Optional[Encoder] = None
         # self.IDR_receive_finished=False
-        self.use_multistream =False
+        self.use_multistream =True
         self.encode_mode=MultiEncodeMode()
         self.encode_role_forwart=False #前向：stream1向stream2切换，否则stream2向stream1切换
         self.pace_sender:Optional[PacedSender]=None
@@ -296,7 +296,7 @@ class RTCRtpSender():
                     if self.__encoder_two and hasattr(self.__encoder_two, "target_bitrate"):
                             self.__encoder_two.target_bitrate=bitrate
                     # 更新pacer速率
-                    pacing_rate=(2.5*bitrate)/1024
+                    pacing_rate=(1.0*bitrate)/1024
                     self.pace_sender.set_pacing_rates(pacing_rate,0)# kbps
                     self.__log_debug(
                         "BWE | receiver estimated maximum bitrate Target bitrate:%d bps,encode bitrate:%d,pacing bitrate:%d", bitrate,self.__encoder.target_bitrate,pacing_rate
@@ -437,7 +437,7 @@ class RTCRtpSender():
                         ssrc=self._ssrc,
                         marker = (i == len(enc_frame.payloads) - 1) and 1 or 0 # 最后一个包
                     )
-                    packet.set_packet_type(RtpPacketMediaType.kVideo)
+                    packet.set_packet_type(RtpPacketMediaType.kVideo1)
                     packet.set_allow_retransmission(True)
                     packet.set_first_packet_of_frame(i==0)
                     if frame_type.value==0 or frame_type.value==4:
@@ -523,12 +523,12 @@ class RTCRtpSender():
                 self._data = await self.__track.recv()
                 queue_time=self.pace_sender.expected_queue_time()
                 # self.__log_debug('[FRAME_INFO] Number: %d, PTS: %d, queue_time: %d ms', frame_number,timestamp, queue_time.total_seconds()*1000)
-                if self._data.index%50==0 and self._data.index>=50:
+                if self._data.index%60==0 and self._data.index>=60:
                         self.encode_mode.transition("S1")#转换到S1:出现关键帧
                         self.encode_role_forwart=not self.encode_role_forwart
-                if self._data.index%50==1 and self._data.index>=50:
+                if self._data.index%60==1 and self._data.index>=60:
                     self.encode_mode.transition("S2")#转换到S2：一张关键帧编码完成开始传输
-                if  self._data.index%50==5 and self._data.index>=50:
+                if  self._data.index%60==5 and self._data.index>=60:
                     self.encode_mode.transition("S3")#转换到S3：关键帧传输完成
                
                 # 对于正常P帧编码的stream，正常传输直到编码器停止返回None
@@ -557,8 +557,11 @@ class RTCRtpSender():
                         ssrc=self._ssrc,
                         marker = (i == len(enc_frame.payloads) - 1) and 1 or 0 
                         )
-                        
-                        packet.set_packet_type(RtpPacketMediaType.kVideo)
+                        if self.encode_mode.current_state=="S0" or (self.encode_role_forwart and not self.encode_mode.current_state=="S3") or (not self.encode_role_forwart and self.encode_mode.current_state=="S3"):
+                            packet.set_packet_type(RtpPacketMediaType.kVideo1)
+                        else:
+                            packet.set_packet_type(RtpPacketMediaType.kVideo2)
+
                         packet.set_allow_retransmission(True)
                         packet.set_first_packet_of_frame(i==0)
                         if frame_type.value==0 or frame_type.value==4:
@@ -629,8 +632,11 @@ class RTCRtpSender():
                         ssrc=self._ssrc,
                         marker = (i == len(enc_frame.payloads) - 1) and 1 or 0 
                         )
-                        
-                        packet.set_packet_type(RtpPacketMediaType.kVideo)
+                        if  (self.encode_role_forwart and  self.encode_mode.current_state=="S3") or (not self.encode_role_forwart and (self.encode_mode.current_state=="S1" or self.encode_mode.current_state=="S2")):
+                            packet.set_packet_type(RtpPacketMediaType.kVideo1)
+                        else:
+                            packet.set_packet_type(RtpPacketMediaType.kVideo2)
+
                         packet.set_allow_retransmission(True)
                         packet.set_first_packet_of_frame(i==0)
                         if frame_type.value==0 or frame_type.value==4:

@@ -791,7 +791,8 @@ class RtpPacket:
 
 class RtpPacketMediaType(Enum):
     kAudio = auto()                    # Audio media packets.
-    kVideo = auto()                    # Video media packets.
+    kVideo1 = auto()                    # Video media packets.
+    kVideo2 = auto()                    # Video media packets.
     kRetransmission = auto()           # Retransmissions, sent as response to NACK.
     kForwardErrorCorrection = auto()   # FEC packets.
     kPadding = auto()                  # RTX or plain padding sent to maintain BWE.

@@ -771,20 +771,32 @@ deep reason:
     for frame in decoder.decode(encoded_frame) every time decoder start with frame number 0
 result: add packet property:frame_number
 reson2: encoder1 and encoder2 not paused when needed
+（4）为多流传输视频包设置不同优先级
 [log38]
 pacer rate= target rate*2.5
 self._drain_large_queues:bool=False # 排空
 self.use_multistream =True
 未采用I帧接收完成反馈
-I帧间隔：50
+I帧间隔：60
 
 [log39]
 pacer rate= target rate*1.5
 self._drain_large_queues:bool=False # 排空
 self.use_multistream =True
 未采用I帧接收完成反馈
-I帧间隔：50
-
+I帧间隔：60
+[log40]
+pacer rate= target rate*1.5
+self._drain_large_queues:bool=False # 排空
+self.use_multistream =True
+未采用I帧接收完成反馈
+I帧间隔：60
+[log41]
+pacer rate= target rate*2.5
+self._drain_large_queues:bool=False # 排空
+self.use_multistream =False
+未采用I帧接收完成反馈
+I帧间隔：60
 
 
  

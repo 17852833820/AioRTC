@@ -42,15 +42,20 @@ def get_priority_for_type(packet_type)->int:
     elif packet_type == RtpPacketMediaType.kRetransmission: # 重传报第二优先级
         # Send retransmissions before new media.
         return k_first_priority + 2
-    elif packet_type in [RtpPacketMediaType.kVideo, RtpPacketMediaType.kForwardErrorCorrection]: #视频包和FEC优先级为3
+    elif packet_type in [RtpPacketMediaType.kVideo1, RtpPacketMediaType.kForwardErrorCorrection]: #视频包和FEC优先级为3
         # Video has "normal" priority, in the old speak.
         # Send redundancy concurrently to video. If it is delayed it might have a
         # lower chance of being useful.
         return k_first_priority + 3
+    elif packet_type == RtpPacketMediaType.kVideo2: #视频包2
+        # Video has "normal" priority, in the old speak.
+        # Send redundancy concurrently to video. If it is delayed it might have a
+        # lower chance of being useful.
+        return k_first_priority + 4
     elif packet_type == RtpPacketMediaType.kPadding: #padding优先级最低
         # Packets that are in themselves likely useless, only sent to keep the
         # BWE high.
-        return k_first_priority + 4
+        return k_first_priority + 5
     else:
         # Handle unknown packet type or provide a default priority.
         return k_first_priority
