@@ -772,6 +772,7 @@ deep reason:
 result: add packet property:frame_number
 reson2: encoder1 and encoder2 not paused when needed
 （4）为多流传输视频包设置不同优先级
+（5）记录I帧index列表
 [log38]
 pacer rate= target rate*2.5
 self._drain_large_queues:bool=False # 排空
@@ -795,8 +796,16 @@ I帧间隔：60
 pacer rate= target rate*2.5
 self._drain_large_queues:bool=False # 排空
 self.use_multistream =False
-未采用I帧接收完成反馈
-I帧间隔：60
+ ![Alt text](./res_picture/log41-1.png)
+ ![Alt text](./res_picture/log41-2.png)
+ ![Alt text](./res_picture/log41-3.png)
+ ![Alt text](./res_picture/log41-4.png)
+ ![Alt text](./res_picture/log41-5.png)
+ ![Alt text](./res_picture/log41-6.png)
 
 
  
+## TC
+1. 准备一个至少两个网卡的linux主机作为tc
+   
+   ![Alt text](img_v3_025j_5a837f6a-4d3d-4f8e-a075-40199d8dedfg.jpg)

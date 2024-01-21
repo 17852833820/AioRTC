@@ -296,7 +296,7 @@ class RTCRtpSender():
                     if self.__encoder_two and hasattr(self.__encoder_two, "target_bitrate"):
                             self.__encoder_two.target_bitrate=bitrate
                     # 更新pacer速率
-                    pacing_rate=(1.0*bitrate)/1024
+                    pacing_rate=(2.5*bitrate)/1024
                     self.pace_sender.set_pacing_rates(pacing_rate,0)# kbps
                     self.__log_debug(
                         "BWE | receiver estimated maximum bitrate Target bitrate:%d bps,encode bitrate:%d,pacing bitrate:%d", bitrate,self.__encoder.target_bitrate,pacing_rate
@@ -362,8 +362,8 @@ class RTCRtpSender():
             # 组装RtpPacketToSend并入队
             self.pace_sender.enqueue_packets(packets)
     def _recv_keyframe_finished(self)->None:
-        # if self._data.index>1:
-        #     self.encode_mode.transition("S3")#转换到S3：关键帧传输完成
+        if self._data.index>1:
+            self.encode_mode.transition("S3")#转换到S3：关键帧传输完成
         logger.info("Render encode_mode: {0},Number:{1}".format(self.encode_mode.current_state,self._data.index))
     def _send_keyframe(self) -> None:
         """
@@ -513,6 +513,9 @@ class RTCRtpSender():
         timestamp_origin = random32()#初始化一个随机的初始时间和随机的初始包序号
         self.__log_debug('[FRAME_INFO] Timestamp_origin: %d, Sequence_number: %d',timestamp_origin, sequence_number)
         frame_number=0
+        last_key_frame=0
+        with open("./log/keyframe/log41.txt", 'r') as file:
+            keyframe = [int(line.strip()) for line in file]
         try:
             while True:#主循环：不断获取下一个编码帧，遍历帧中的payload并创建RTP数据包发送
                 if not self.__track:
@@ -523,13 +526,16 @@ class RTCRtpSender():
                 self._data = await self.__track.recv()
                 queue_time=self.pace_sender.expected_queue_time()
                 # self.__log_debug('[FRAME_INFO] Number: %d, PTS: %d, queue_time: %d ms', frame_number,timestamp, queue_time.total_seconds()*1000)
-                if self._data.index%60==0 and self._data.index>=60:
+                # if self._data.index%30==0 and self._data.index>=30:
+                if frame_number in keyframe:
                         self.encode_mode.transition("S1")#转换到S1:出现关键帧
                         self.encode_role_forwart=not self.encode_role_forwart
-                if self._data.index%60==1 and self._data.index>=60:
+                        last_key_frame=frame_number
+                # if self._data.index%30==1 and self._data.index>=30:
+                if frame_number==last_key_frame+1:
                     self.encode_mode.transition("S2")#转换到S2：一张关键帧编码完成开始传输
-                if  self._data.index%60==5 and self._data.index>=60:
-                    self.encode_mode.transition("S3")#转换到S3：关键帧传输完成
+                # if  self._data.index%30==5 and self._data.index>=30:
+                #     self.encode_mode.transition("S3")#转换到S3：关键帧传输完成
                
                 # 对于正常P帧编码的stream，正常传输直到编码器停止返回None
                 # if not self.condition_Finish_event.is_set() and enc_frame:
