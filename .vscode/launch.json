@@ -13,10 +13,11 @@
             // "program": "${workspaceFolder}/examples/server/server.py",
             "console": "integratedTerminal",
             "justMyCode": true,
-            // "args": ["offer","--play-from","./dataset/driving.mp4","-v","-s", "tcp-socket", "--signaling-port", "2223"]
-            "args": ["answer", "--record-to","./receive_data/anamal-1080p.mp4","-v","-s","tcp-socket","--signaling-port","2223"]
+            // "args": ["offer","--play-from","./dataset/driving.mp4","-v","-s", "tcp-socket", "--signaling-host","10.50.0.1","--signaling-port", "3215"]
+            // "args": ["offer","--play-from","./dataset/driving.mp4","-v","-s", "tcp-socket","--signaling-port", "2224"]
+            "args": ["answer", "--record-to","./receive_data/driving.mp4","-v","-s","tcp-socket", "--signaling-host","10.50.0.1","--signaling-port","3215","--signaling-local-host","10.50.1.1","--signaling-local-port","1234"]
             // "args": ["answer","--record-to","./receive_data/test_recv.mp4"]
 
-        }
+        } 
     ]
 }

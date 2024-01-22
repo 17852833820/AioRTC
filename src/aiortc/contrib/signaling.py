@@ -74,9 +74,11 @@ class CopyAndPasteSignaling:
 
 
 class TcpSocketSignaling:
-    def __init__(self, host, port):
+    def __init__(self, host, port,local_host,local_port):
         self._host = host
         self._port = port
+        self._local_host=local_host
+        self._local_port=local_port
         self._server = None
         self._reader = None
         self._writer = None
@@ -101,9 +103,14 @@ class TcpSocketSignaling:
             )
             await connected.wait()
         else:
-            self._reader, self._writer = await asyncio.open_connection(
-                host=self._host, port=self._port
-            )
+            if self._local_host and self._local_port:
+                self._reader, self._writer = await asyncio.open_connection(
+                    host=self._host, port=self._port, local_addr=(self._local_host,self._local_port)
+                )
+            else:
+                self._reader, self._writer = await asyncio.open_connection(
+                    host=self._host, port=self._port
+                )
 
     async def close(self):
         if self._writer is not None:
@@ -199,6 +206,12 @@ def add_signaling_arguments(parser):
         "--signaling-port", default=1234, help="Signaling port (tcp-socket only)"
     )
     parser.add_argument(
+        "--signaling-local-host", default=None, help="Signaling local host (tcp-socket only)"
+    )
+    parser.add_argument(
+        "--signaling-local-port", default=None, help="Signaling local port (tcp-socket only)"
+    )
+    parser.add_argument(
         "--signaling-path",
         default="aiortc.socket",
         help="Signaling socket path (unix-socket only)",
@@ -210,7 +223,7 @@ def create_signaling(args):
     Create a signaling method based on command-line arguments.
     """
     if args.signaling == "tcp-socket":
-        return TcpSocketSignaling(args.signaling_host, args.signaling_port)
+        return TcpSocketSignaling(args.signaling_host, args.signaling_port,args.signaling_local_host,args.signaling_local_port)
     elif args.signaling == "unix-socket":
         return UnixSocketSignaling(args.signaling_path)
     else:
