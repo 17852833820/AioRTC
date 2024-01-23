@@ -1,4 +1,6 @@
-/log/
+/log/offer/
+/log/answer/
+/log/log/
 *.egg-info
 *.pyc
 *.so
