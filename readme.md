@@ -806,7 +806,9 @@ self.use_multistream =False
  ![Alt text](./res_picture/log41-5.png)
  ![Alt text](./res_picture/log41-6.png)
 
-
+#### 5. TC带宽控制测试
+【log42】未采用带宽控制
+【log43】
  
 ## TC
 1. 准备一个至少两个网卡的linux主机作为tc
