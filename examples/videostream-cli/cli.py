@@ -10,8 +10,8 @@ import numpy
 import av
 from av import VideoFrame
 print(av.__version__)
-sys.path.append("/Users/ying/Library/CloudStorage/OneDrive-hust.edu.cn/Documents/毕业论文/新题-实验/Project/aiortc")
-# sys.path.append("/mnt/e/ying/OneDrive - hust.edu.cn/Documents/毕业论文/新题-实验/Project/aiortc")
+sys.path.append("/Users/huixin/ying/AioRTC")
+ # sys.path.append("/mnt/e/ying/OneDrive - hust.edu.cn/Documents/毕业论文/新题-实验/Project/aiortc")
 from src.aiortc import (RTCIceCandidate, RTCPeerConnection,
                         RTCSessionDescription, VideoStreamTrack)
 from src.aiortc.contrib.media import MediaBlackhole, MediaPlayer, MediaRecorder
@@ -144,7 +144,7 @@ if __name__ == "__main__":
         logger.setLevel(logging.DEBUG)
         # 根据角色设置日志文件路径
         log_directory = f"log/{args.role}/"
-        log_file = f"{log_directory}test-rtt40.log"
+        log_file = f"{log_directory}test-rtt43.log"
         logging.basicConfig(filename=log_file, level=logging.DEBUG,format='%(asctime)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'  )
         # 确保目录存在
