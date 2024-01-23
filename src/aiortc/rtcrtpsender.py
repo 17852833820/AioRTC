@@ -121,7 +121,7 @@ class RTCRtpSender():
         self._data=None
         self.__encoder_two: Optional[Encoder] = None
         # self.IDR_receive_finished=False
-        self.use_multistream =True
+        self.use_multistream =False
         self.encode_mode=MultiEncodeMode()
         self.encode_role_forwart=False #前向：stream1向stream2切换，否则stream2向stream1切换
         self.pace_sender:Optional[PacedSender]=None
