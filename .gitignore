@@ -1,6 +1,8 @@
 /log/offer/
 /log/answer/
 /log/log/
+/log/tc_answer/
+/log/tc_offer/
 *.egg-info
 *.pyc
 *.so
