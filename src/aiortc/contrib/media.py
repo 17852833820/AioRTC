@@ -13,7 +13,7 @@ from av.audio import AudioStream
 from av.frame import Frame
 from av.packet import Packet
 from av.video.stream import VideoStream
-
+from .. import clock
 from ..mediastreams import AUDIO_PTIME, MediaStreamError, MediaStreamTrack
 
 logger = logging.getLogger(__name__)
@@ -258,13 +258,14 @@ class PlayerStreamTrack(MediaStreamTrack):
             else:
                 wait = self._start + data_time - time.time()
                 await asyncio.sleep(wait)
-        #记录fps
+        # 记录fps
         self.counter+=1
         if clock.current_ms()-self.last_arrival_time>1000:
             self.fps=self.counter
             logger.info("Player fps:{0}".format(self.fps))
-            se;f.counter=0
+            self.counter=0
             self.last_arrival_time=clock.current_ms()
+            
         return data
 
     def stop(self):
