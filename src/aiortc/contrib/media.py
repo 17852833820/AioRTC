@@ -5,7 +5,7 @@ import logging
 import threading
 import time
 from typing import Dict, Optional, Set, Union
-from ..import clock
+from .. import clock
 import av
 import cv2
 from av import AudioFrame, VideoFrame
@@ -258,13 +258,7 @@ class  PlayerStreamTrack(MediaStreamTrack):
             else:
                 wait = self._start + data_time - time.time()
                 await asyncio.sleep(wait)
-        #记录fps
-        self.counter+=1
-        if clock.current_ms()-self.last_arrival_time>1000:
-            self.fps=self.counter
-            logger.info("Player fps:{0}".format(self.fps))
-            self.counter=0
-            self.last_arrival_time=clock.current_ms()
+
         return data
 
     def stop(self):
