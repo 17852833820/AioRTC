@@ -13,8 +13,8 @@
             // "program": "${workspaceFolder}/examples/server/server.py",
             "console": "integratedTerminal",
             "justMyCode": true,
-            "args": ["offer","--play-from","./dataset/driving.mp4","-v","-s", "tcp-socket", "--signaling-host","10.0.0.3","--signaling-port", "3215"]
-            // "args": ["answer", "--record-to","./receive_data/anamal-1080p.mp4","-v","-s","tcp-socket","--signaling-host","10.0.0.3","--signaling-port","3215","--signaling-local-host","10.0.0.2","--signaling-local-port","1234"]
+            // "args": ["offer","--play-from","./dataset/driving.mp4","-v","-s", "tcp-socket", "--signaling-host","10.0.0.3","--signaling-port", "3215"]
+            "args": ["answer", "--record-to","./receive_data/anamal-1080p.mp4","-v","-s","tcp-socket","--signaling-host","10.0.0.3","--signaling-port","3215","--signaling-local-host","10.0.0.2","--signaling-local-port","1234"]
 
         }
     ]

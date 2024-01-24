@@ -504,7 +504,7 @@ class RemoteStreamTrack(MediaStreamTrack):
         self.counter+=1
         if clock.current_ms()-self.last_arrival_time>1000: 
             self.fps=self.counter
-            logger.info("fps:{0},Number:{1}".format(self.fps,frame.index))
+            logger.info("Render fps:{0},Number:{1}".format(self.fps,frame.index))
             self.counter=0
             self.last_arrival_time=clock.current_ms()
         return frame
