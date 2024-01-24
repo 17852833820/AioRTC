@@ -19,7 +19,6 @@
 /dataset/
 /log/analyses-receiver.ipynb
 /receive_data/
-/log/tc_answer/
 env/
 venv/
 ENV/
