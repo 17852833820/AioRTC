@@ -7,6 +7,7 @@ import time
 from typing import Dict, Optional, Set, Union
 import cv2
 import av
+from .. import clock
 from av import AudioFrame, VideoFrame
 from av.audio import AudioStream
 from av.frame import Frame
@@ -225,6 +226,9 @@ class PlayerStreamTrack(MediaStreamTrack):
         self._player = player
         self._queue = asyncio.Queue()
         self._start = None
+        self.fps:int=0
+        self.counter:int=0
+        self.last_arrival_time=clock.current_ms()
 
     async def recv(self) -> Union[Frame, Packet]:
         if self.readyState != "live":
@@ -254,7 +258,13 @@ class PlayerStreamTrack(MediaStreamTrack):
             else:
                 wait = self._start + data_time - time.time()
                 await asyncio.sleep(wait)
-
+        #记录fps
+        self.counter+=1
+        if clock.current_ms()-self.last_arrival_time>1000:
+            self.fps=self.counter
+            logger.info("Player fps:{0}".format(self.fps))
+            se;f.counter=0
+            self.last_arrival_time=clock.current_ms()
         return data
 
     def stop(self):

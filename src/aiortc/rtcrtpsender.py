@@ -224,6 +224,7 @@ class RTCRtpSender:
                 # estimate round-trip time
                 if self.__lsr == report.lsr and report.dlsr:
                     rtt = time.time() - self.__lsr_time - (report.dlsr / 65536)
+                    logger.info("[FRAME INFO] RTT: {0} ms".format(rtt))
                     if self.__rtt is None:
                         self.__rtt = rtt
                     else:
