@@ -141,7 +141,7 @@ if __name__ == "__main__":
         logger=logging.getLogger(__name__)
         logger.setLevel(logging.DEBUG)
         log_directory=f"log/tc_{args.role}/"
-        log_file=f"{log_directory}test-rtt-raw-1000kbps.log"
+        log_file=f"{log_directory}test-rtt-trace2.log"
         logging.basicConfig(filename=log_file,level=logging.DEBUG,format='%(asctime)s-%(levelname)s-%(message)s',datefmt='%Y-%m-%d %H:%M:%S')
         os.makedirs(log_directory,exist_ok=True)
 
