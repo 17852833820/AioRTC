@@ -6,7 +6,7 @@ import os
 import cv2
 import numpy
 import sys
-sys.path.append("/Users/ying/Library/CloudStorage/OneDrive-hust.edu.cn/Documents/毕业论文/新题-实验/Project/aiortc/")
+sys.path.append("/Users/huixin/ying/AioRTC/")
 from src.aiortc import (
     RTCIceCandidate,
     RTCPeerConnection,
@@ -141,7 +141,7 @@ if __name__ == "__main__":
         logger=logging.getLogger(__name__)
         logger.setLevel(logging.DEBUG)
         log_directory=f"log/tc_{args.role}/"
-        log_file=f"{log_directory}test-rtt-trace2.log"
+        log_file=f"{log_directory}test-raw-offer-nolimit.log"
         logging.basicConfig(filename=log_file,level=logging.DEBUG,format='%(asctime)s-%(levelname)s-%(message)s',datefmt='%Y-%m-%d %H:%M:%S')
         os.makedirs(log_directory,exist_ok=True)
 

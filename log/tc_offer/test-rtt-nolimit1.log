@@ -1,0 +1,103 @@
+2024-01-24 17:56:28 - DEBUG - Using selector: KqueueSelector
+2024-01-24 17:56:28 - DEBUG - RTCPeerConnection() setLocalDescription(offer)
+v=0
+o=- 3915078988 3915078988 IN IP4 0.0.0.0
+s=-
+t=0 0
+a=group:BUNDLE 0
+a=msid-semantic:WMS *
+m=video 9 UDP/TLS/RTP/SAVPF 99 101
+c=IN IP4 0.0.0.0
+a=sendrecv
+a=extmap:1 urn:ietf:params:rtp-hdrext:sdes:mid
+a=extmap:3 http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time
+a=extmap:2 urn:ietf:params:rtp-hdrext:sdes:marker_first
+a=mid:0
+a=msid:1c3fe739-6afa-425e-b71d-a362bd857517 c2f9021c-7564-4382-b366-dd83b677a1ab
+a=rtcp:9 IN IP4 0.0.0.0
+a=rtcp-mux
+a=ssrc:1704763030 cname:f8ec875d-e74f-495c-a8b6-b6ee294223ca
+a=rtpmap:99 H264/90000
+a=rtcp-fb:99 nack
+a=rtcp-fb:99 nack pli
+a=rtcp-fb:99 goog-remb
+a=fmtp:99 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f
+a=rtpmap:101 H264/90000
+a=rtcp-fb:101 nack
+a=rtcp-fb:101 nack pli
+a=rtcp-fb:101 goog-remb
+a=fmtp:101 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f
+a=ice-ufrag:GwxL
+a=ice-pwd:qhaP9vJPR5iQ0xFSAyP3ov
+a=fingerprint:sha-256 63:B8:75:7F:2C:D6:47:99:ED:F2:B9:DC:E6:7D:87:29:0C:15:84:97:30:4C:10:13:5C:9F:9F:2B:60:3E:78:3F
+a=setup:actpass
+
+2024-01-24 17:56:28 - DEBUG - RTCPeerConnection() iceGatheringState new -> gathering
+2024-01-24 17:56:28 - DEBUG - Connection(0) protocol(0) connection_made(<_SelectorDatagramTransport fd=10 read=idle write=<idle, bufsize=0>>)
+2024-01-24 17:56:28 - DEBUG - RTCPeerConnection() iceGatheringState gathering -> complete
+2024-01-24 17:56:31 - DEBUG - RTCPeerConnection() setRemoteDescription(answer)
+v=0
+o=- 3915078991 3915078991 IN IP4 0.0.0.0
+s=-
+t=0 0
+a=group:BUNDLE 0
+a=msid-semantic:WMS *
+m=video 64635 UDP/TLS/RTP/SAVPF 99 101
+c=IN IP4 10.0.0.2
+a=sendrecv
+a=extmap:1 urn:ietf:params:rtp-hdrext:sdes:mid
+a=extmap:3 http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time
+a=extmap:2 urn:ietf:params:rtp-hdrext:sdes:marker_first
+a=mid:0
+a=msid:28fd3eb0-6b1e-4183-9eec-9a2c4db89f21 e026ff30-2a8d-4afd-a495-72aeb4628161
+a=rtcp:9 IN IP4 0.0.0.0
+a=rtcp-mux
+a=ssrc:370481789 cname:906f8ddd-8cf7-4b77-a5a9-40a55f736281
+a=rtpmap:99 H264/90000
+a=rtcp-fb:99 nack
+a=rtcp-fb:99 nack pli
+a=rtcp-fb:99 goog-remb
+a=fmtp:99 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f
+a=rtpmap:101 H264/90000
+a=rtcp-fb:101 nack
+a=rtcp-fb:101 nack pli
+a=rtcp-fb:101 goog-remb
+a=fmtp:101 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f
+a=candidate:c5601043ee72d37bfffe760a26cf07d2 1 udp 2130706431 10.0.0.2 64635 typ host
+a=end-of-candidates
+a=ice-ufrag:l6EX
+a=ice-pwd:PrVL21umN37VnjP35mxW4h
+a=fingerprint:sha-256 C4:8C:20:79:6F:1B:B5:9B:B0:DB:16:EB:E2:30:75:50:19:7D:C1:82:4D:F9:08:60:1E:76:27:58:17:DF:31:07
+a=setup:active
+
+2024-01-24 17:56:31 - DEBUG - Connection(0) protocol(0) < ('10.0.0.2', 64635) Message(message_method=Method.BINDING, message_class=Class.REQUEST, transaction_id=b"\xac\xe0\x8c\xdf\xc5d\xab\x1b3'v\x8d")
+2024-01-24 17:56:31 - DEBUG - Connection(0) protocol(0) > ('10.0.0.2', 64635) Message(message_method=Method.BINDING, message_class=Class.RESPONSE, transaction_id=b"\xac\xe0\x8c\xdf\xc5d\xab\x1b3'v\x8d")
+2024-01-24 17:56:31 - DEBUG - RTCIceTransport(controlling) - new -> checking
+2024-01-24 17:56:31 - DEBUG - RTCPeerConnection() iceConnectionState new -> checking
+2024-01-24 17:56:31 - DEBUG - RTCPeerConnection() connectionState new -> connecting
+2024-01-24 17:56:31 - INFO - Connection(0) Check CandidatePair(('10.0.0.3', 60024) -> ('10.0.0.2', 64635)) State.FROZEN -> State.WAITING
+2024-01-24 17:56:31 - INFO - Connection(0) Check CandidatePair(('10.0.0.3', 60024) -> ('10.0.0.2', 64635)) State.WAITING -> State.IN_PROGRESS
+2024-01-24 17:56:31 - DEBUG - Connection(0) protocol(0) > ('10.0.0.2', 64635) Message(message_method=Method.BINDING, message_class=Class.REQUEST, transaction_id=b'"\xf7l\xc0\xfe\x87\xff\xa7:\xdb\x8c\xef')
+2024-01-24 17:56:31 - DEBUG - Connection(0) protocol(0) < ('10.0.0.2', 64635) Message(message_method=Method.BINDING, message_class=Class.RESPONSE, transaction_id=b'"\xf7l\xc0\xfe\x87\xff\xa7:\xdb\x8c\xef')
+2024-01-24 17:56:31 - INFO - Connection(0) Check CandidatePair(('10.0.0.3', 60024) -> ('10.0.0.2', 64635)) State.IN_PROGRESS -> State.SUCCEEDED
+2024-01-24 17:56:31 - INFO - Connection(0) ICE completed
+2024-01-24 17:56:31 - DEBUG - RTCIceTransport(controlling) - checking -> completed
+2024-01-24 17:56:31 - DEBUG - RTCPeerConnection() iceConnectionState checking -> completed
+2024-01-24 17:56:31 - DEBUG - RTCDtlsTransport(server) - State.NEW -> State.CONNECTING
+2024-01-24 17:56:31 - DEBUG - RTCDtlsTransport(server) - DTLS handshake complete
+2024-01-24 17:56:31 - DEBUG - RTCDtlsTransport(server) - State.CONNECTING -> State.CONNECTED
+2024-01-24 17:56:31 - DEBUG - RTCPeerConnection() connectionState connecting -> connected
+2024-01-24 17:56:31 - INFO - ProcessThreadAttached 0x181b99e50
+2024-01-24 17:56:31 - INFO - BWE: pacer_updated pacing_kbps= 976 , padding_budget_kbps= 0 
+2024-01-24 17:56:31 - DEBUG - Using selector: KqueueSelector
+2024-01-24 17:56:31 - INFO - Pacer Queue | IncreaseBudget Update Media_budget: target_rate_kbps:976.5625, bytes_remaining:625.48828125
+2024-01-24 17:56:31 - INFO - Pacer Queue | IncreaseBudget Update Media_budget: target_rate_kbps:976.5625, bytes_remaining:702.63671875
+2024-01-24 17:56:31 - DEBUG - Using selector: KqueueSelector
+2024-01-24 17:56:31 - INFO - Pacer Queue | IncreaseBudget Update Media_budget: target_rate_kbps:976.5625, bytes_remaining:822.75390625
+2024-01-24 17:56:31 - INFO - Pacer Queue | IncreaseBudget Update Media_budget: target_rate_kbps:976.5625, bytes_remaining:1003.90625
+2024-01-24 17:56:31 - DEBUG - Using selector: KqueueSelector
+2024-01-24 17:56:31 - INFO - Pacer Queue | IncreaseBudget Update Media_budget: target_rate_kbps:976.5625, bytes_remaining:1095.947265625
+2024-01-24 17:56:31 - DEBUG - RTCRtpSender(video) - RTP started
+2024-01-24 17:56:31 - INFO - Pacer Queue | IncreaseBudget Update Media_budget: target_rate_kbps:976.5625, bytes_remaining:1183.2275390625
+2024-01-24 17:56:31 - DEBUG - RTCRtpSender(video) [FRAME_INFO] Timestamp_origin: 3968412275, Sequence_number: 20399
+2024-01-24 17:56:31 - INFO - Pacer Queue | IncreaseBudget Update Media_budget: target_rate_kbps:976.5625, bytes_remaining:1229.736328125
