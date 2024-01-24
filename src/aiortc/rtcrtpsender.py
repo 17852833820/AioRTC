@@ -305,8 +305,8 @@ class RTCRtpSender():
                 pass
 
     async def _next_encoded_frame(self, codec: RTCRtpCodecParameters):
-            # 设置关键帧
-            if not self.encode_role_forwart and self.encode_mode.current_state=="S1":
+            # 设置关键帧 nolimit1
+            if self.use_multistream and not self.encode_role_forwart and self.encode_mode.current_state=="S1":
                 self._send_keyframe()
             #获取下一个媒体帧或数据包
             audio_level = None

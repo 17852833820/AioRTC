@@ -809,6 +809,9 @@ self.use_multistream =False
 #### 5. TC带宽控制测试
 【log42】未采用带宽控制
 【log43】
+出现的问题：画面模糊，码率较低
+问题分析：排除pacer的原因，发现player fps较低
+
  
 ## TC
 1. 准备一个至少两个网卡的linux主机作为tc
