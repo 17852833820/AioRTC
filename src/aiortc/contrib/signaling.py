@@ -4,8 +4,8 @@ import logging
 import os
 import sys
 
-from aiortc import RTCIceCandidate, RTCSessionDescription
-from aiortc.sdp import candidate_from_sdp, candidate_to_sdp
+from src.aiortc import RTCIceCandidate, RTCSessionDescription
+from src.aiortc.sdp import candidate_from_sdp, candidate_to_sdp
 
 logger = logging.getLogger(__name__)
 BYE = object()

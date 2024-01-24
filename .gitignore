@@ -9,10 +9,17 @@
 /build
 /dist
 /docs/_build
-
+.conda/
 # Environments
 .env
 .venv
+/log/answer/
+/log/offer/
+/log/log/
+/dataset/
+/log/analyses-receiver.ipynb
+/receive_data/
+/log/tc_answer/
 env/
 venv/
 ENV/
