@@ -11,6 +11,9 @@
             "program": "${file}",
             "console": "integratedTerminal",
             // "args": ["offer","--play-from","./dataset/driving.mp4","-v","-s","tcp-socket","--signaling-port","1234"]
+            // "args": ["answer","--record-to","./receive_data/driving.mp4","-v","-s","tcp-socket","--signaling-port","1234"]
+
+            // "args": ["offer","--play-from","./dataset/driving.mp4","-v","-s","tcp-socket","--signaling-port","1234"]
             "args": ["answer","--record-to","./receive_data/driving.mp4","-v","-s","tcp-socket","--signaling-host","10.0.0.3","--signaling-port","1234"]
 
             // "args": ["offer","--play-from","./dataset/driving.mp4","-v","-s","tcp-socket","--signaling-host","10.0.0.3","--signaling-port","1234"]
