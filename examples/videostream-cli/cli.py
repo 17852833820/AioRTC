@@ -2,17 +2,20 @@ import argparse
 import asyncio
 import logging
 import math
-
+import os
 import cv2
 import numpy
-from aiortc import (
+import sys
+sys.path.append("/Users/ying/Library/CloudStorage/OneDrive-hust.edu.cn/Documents/毕业论文/新题-实验/Project/aiortc/")
+from src.aiortc import (
     RTCIceCandidate,
     RTCPeerConnection,
     RTCSessionDescription,
     VideoStreamTrack,
 )
-from aiortc.contrib.media import MediaBlackhole, MediaPlayer, MediaRecorder
-from aiortc.contrib.signaling import BYE, add_signaling_arguments, create_signaling
+from src.aiortc.contrib.media import MediaBlackhole, MediaPlayer, MediaRecorder
+from src.aiortc.contrib.signaling import BYE, add_signaling_arguments, create_signaling
+from src.aiortc.rtcrtpsender import RTCRtpSender
 from av import VideoFrame
 
 
@@ -97,6 +100,10 @@ async def run(pc, player, recorder, signaling, role):
     if role == "offer":
         # send offer
         add_tracks()
+        capabilities=RTCRtpSender.getCapabilities("video")
+        preferences=list(filter(lambda x:x.name=="H264",capabilities.codecs))
+        transceiver=pc.getTransceivers()[1]# video 
+        transceiver.setCodecPreferences(preferences)
         await pc.setLocalDescription(await pc.createOffer())
         await signaling.send(pc.localDescription)
 
@@ -130,7 +137,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.verbose:
-        logging.basicConfig(level=logging.DEBUG)
+        # logging.basicConfig(level=logging.DEBUG)
+        logger=logging.getLogger(__name__)
+        logger.setLevel(logging.DEBUG)
+        log_directory=f"log/{args.role}/"
+        log_file=f"{log_directory}test-rtt-raw.log"
+        logging.basicConfig(filename=log_file,level=logging.DEBUG,format='%(asctime)s-%(levelname)s-%(message)s',datefmt='%Y-%m-%d %H:%M:%S')
+        os.makedirs(log_directory,exist_ok=True)
 
     # create signaling and peer connection
     signaling = create_signaling(args)
@@ -139,8 +152,10 @@ if __name__ == "__main__":
     # create media source
     if args.play_from:
         player = MediaPlayer(args.play_from)
+        cv2.namedWindow("SendVideo",cv2.WINDOW_NORMAL)
     else:
         player = None
+        cv2.namedWindow("RecvVideo",cv2.WINDOW_NORMAL)
 
     # create media sink
     if args.record_to:

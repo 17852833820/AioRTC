@@ -5,12 +5,15 @@ from typing import List, Optional, Tuple
 from av import AudioFrame
 from av.frame import Frame
 from av.packet import Packet
-
+import sys
+sys.path.append("/Users/ying/Library/CloudStorage/OneDrive-hust.edu.cn/Documents/毕业论文/新题-实验/Project/aiortc/")
 from ..jitterbuffer import JitterFrame
 from ..mediastreams import convert_timebase
-from ._opus import ffi, lib
+# from ._opus import ffi, lib
 from .base import Decoder, Encoder
-
+from typing import Any
+ffi:Any
+lib:Any
 CHANNELS = 2
 SAMPLE_RATE = 48000
 SAMPLE_WIDTH = 2

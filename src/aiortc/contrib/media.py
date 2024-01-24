@@ -5,7 +5,7 @@ import logging
 import threading
 import time
 from typing import Dict, Optional, Set, Union
-
+import cv2
 import av
 from av import AudioFrame, VideoFrame
 from av.audio import AudioStream
@@ -237,6 +237,9 @@ class PlayerStreamTrack(MediaStreamTrack):
             raise MediaStreamError
         if isinstance(data, Frame):
             data_time = data.time
+            image=data.to_ndarray(format="bgr24")
+            cv2.imshow("SendVideo",image)
+            cv2.waitKey(1)
         elif isinstance(data, Packet):
             data_time = float(data.pts * data.time_base)
 
@@ -483,7 +486,9 @@ class MediaRecorder:
                     context.stream.width = frame.width
                     context.stream.height = frame.height
                 context.started = True
-
+            image=frame.to_ndarray(format="bgr24")
+            cv2.imshow("RecvVideo",image)
+            cv2.waitKey(1)
             for packet in context.stream.encode(frame):
                 self.__container.mux(packet)
 
