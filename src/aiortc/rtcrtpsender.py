@@ -414,8 +414,11 @@ class RTCRtpSender():
                     continue
                 
                 # 编码下一帧
+                time1=clock.current_ms()
                 self._data = await self.__track.recv()
                 enc_frame, enc_dur ,frame_type,frame_size= await self._next_encoded_frame(codec) #返回了一帧图像编码后产生的数据：编码打包后的packet列表和时间戳，enc_dur为编码一张图像花费的时间
+                time2=clock.current_ms()
+                logger.debug("Test Time1:{0}".format(time2-time1))
                 # 对于正常P帧编码的stream，正常传输直到编码器停止返回None
                 timestamp = uint32_add(timestamp_origin, enc_frame.timestamp)
                 # 遍历每个packet并为其创建一个RTP数据包
@@ -478,9 +481,13 @@ class RTCRtpSender():
                     self.__octet_count += len(payload)
                     self.__packet_count += 1
                     sequence_number = uint16_add(sequence_number, 1)
+                time3=clock.current_ms()
+                logger.debug("Test Time2:{0}".format(time3-time2))
                 #=======================================Version 2===============================================
                 self.pace_sender.enqueue_packets(packets)
                 queue_time=self.pace_sender.expected_queue_time()
+                time4=clock.current_ms()
+                logger.debug("Test Time3:{0}".format(time4-time3))
                 self.__log_debug('[FRAME_INFO] Stream id : 1, Number: %d, PTS: %d, enc_dur: %d Type: %s, size: %d, queue_time: %d ms', frame_number,timestamp, enc_dur,frame_type.name,frame_size,queue_time.total_seconds()*1000)
                 #===============================================================================================
                 # 计算发送速率
@@ -491,6 +498,8 @@ class RTCRtpSender():
                     self.last_timestamp=self.timestamp
                     self.last_count=self.__packet_count
                 frame_number = uint16_add(frame_number, 1)
+                time5=clock.current_ms()
+                logger.debug("Test Time4:{0}".format(time5-time4))
         except (asyncio.CancelledError, ConnectionError, MediaStreamError):
             pass
         except Exception:

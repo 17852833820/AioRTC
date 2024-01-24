@@ -258,7 +258,12 @@ class  PlayerStreamTrack(MediaStreamTrack):
             else:
                 wait = self._start + data_time - time.time()
                 await asyncio.sleep(wait)
-
+        self.counter+=1
+        if clock.current_ms()-self.last_arrival_time>1000:
+            self.fps=self.counter
+            logger.info("[FRAME INFO] Player fps:{0}".format(self.fps))
+            self.counter=0
+            self.last_arrival_time=clock.current_ms()
         return data
 
     def stop(self):
@@ -351,7 +356,7 @@ class MediaPlayer:
         ), "The `loop` argument requires a seekable file"
         self._loop_playback = loop #检查是否支持循环播放
         # 禁用音频编码
-        self.__audio=None
+        # self.__audio=None
 
     @property
     def audio(self) -> MediaStreamTrack:
