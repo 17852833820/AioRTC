@@ -826,6 +826,16 @@ self.use_multistream =False
 ![Alt text](./res_picture/server-2-4.png)
 ![Alt text](./res_picture/server-2-5.png)
 ![Alt text](./res_picture/server-2-6.png)
+（2）ymx主机接收，mac发送
+【offer/test-dev.log】
+【answer/test-dev.log】
+![Alt text](./res_picture/newPC-receiver-1.png)
+![Alt text](./res_picture/newPC-receiver-2.png)
+![Alt text](./res_picture/newPC-receiver-3.png)
+![Alt text](./res_picture/newPC-receiver-4.png)
+![Alt text](./res_picture/newPC-receiver-5.png)
+![Alt text](./res_picture/newPC-receiver-6.png)
+
 ## TC
 1. 准备一个至少两个网卡的linux主机作为tc
    
