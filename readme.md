@@ -808,11 +808,24 @@ self.use_multistream =False
 
 #### 5. TC带宽控制测试
 【log42】未采用带宽控制
-【log43】
 出现的问题：画面模糊，码率较低
 问题分析：排除pacer的原因，发现player fps较低
-
- 
+根本原因：设备性能问题
+（1）Server上自发自收，无tc测试
+【server_offer/test-dev-nolimit1】
+【server_offer/test-dev-nolimit2】
+![Alt text](./res_picture/server-1-1.png)
+![Alt text](./res_picture/server-1-2.png)
+![Alt text](./res_picture/server-1-3.png)
+![Alt text](./res_picture/server-1-4.png)
+![Alt text](./res_picture/server-1-5.png)
+![Alt text](./res_picture/server-1-6.png)
+![Alt text](./res_picture/server-2-1.png)
+![Alt text](./res_picture/server-2-2.png)
+![Alt text](./res_picture/server-2-3.png)
+![Alt text](./res_picture/server-2-4.png)
+![Alt text](./res_picture/server-2-5.png)
+![Alt text](./res_picture/server-2-6.png)
 ## TC
 1. 准备一个至少两个网卡的linux主机作为tc
    

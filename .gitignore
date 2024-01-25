@@ -3,6 +3,8 @@
 /log/log/
 /log/tc_answer/
 /log/tc_offer/
+/log/server_answer/
+/log/server_offer/
 *.egg-info
 *.pyc
 *.so
