@@ -826,7 +826,7 @@ self.use_multistream =False
 ![Alt text](./res_picture/server-2-4.png)
 ![Alt text](./res_picture/server-2-5.png)
 ![Alt text](./res_picture/server-2-6.png)
-（2）ymx主机接收，mac发送
+（2）ymx主机接收，mac发送，无tc
 【offer/test-dev.log】
 【answer/test-dev.log】
 ![Alt text](./res_picture/newPC-receiver-1.png)
@@ -835,8 +835,161 @@ self.use_multistream =False
 ![Alt text](./res_picture/newPC-receiver-4.png)
 ![Alt text](./res_picture/newPC-receiver-5.png)
 ![Alt text](./res_picture/newPC-receiver-6.png)
+（3）ymx主机接收，mac发送，TC测试
+dev-未统一开始时间
+【tc_offer/dev-trace-nomultistream.log】
+![Alt text](./res_picture/dev-nomultistream-1.png)
+![Alt text](./res_picture/dev-nomultistream-2.png)
+![Alt text](./res_picture/dev-nomultistream-3.png)
+![Alt text](./res_picture/dev-nomultistream-4.png)
+![Alt text](./res_picture/dev-nomultistream-5.png)
+![Alt text](./res_picture/dev-nomultistream-6.png)
 
+【tc_offer/dev-trace-nomultistream2.log】
+![Alt text](./res_picture/dev-nomultistream1-1.png)
+![Alt text](./res_picture/dev-nomultistream1-2.png)
+![Alt text](./res_picture/dev-nomultistream1-3.png)
+![Alt text](./res_picture/dev-nomultistream1-4.png)
+![Alt text](./res_picture/dev-nomultistream1-5.png)
+![Alt text](./res_picture/dev-nomultistream1-6.png)
+【tc_offer/dev-trace-multistream1.log】
+![Alt text](./res_picture/dev-multistream1-1.png)
+![Alt text](./res_picture/dev-multistream1-2.png)
+![Alt text](./res_picture/dev-multistream1-3.png)
+![Alt text](./res_picture/dev-multistream1-4.png)
+![Alt text](./res_picture/dev-multistream1-5.png)
+![Alt text](./res_picture/dev-multistream1-6.png)
+-run-统一开始时间
+【tc_offer/run_trace_nomultistream1.log】未采用多流编码
+![Alt text](./res_picture/run-trace-nomultistream1-1.png)
+![Alt text](./res_picture/run-trace-nomultistream1-2.png)
+![Alt text](./res_picture/run-trace-nomultistream1-3.png)
+![Alt text](./res_picture/run-trace-nomultistream1-4.png)
+![Alt text](./res_picture/run-trace-nomultistream1-5.png)
+【tc_offer/run_trace_nomultistream2.log】
+![Alt text](./res_picture/run-trace-nomultistream2-1.png)
+![Alt text](./res_picture/run-trace-nomultistream2-2.png)
+![Alt text](./res_picture/run-trace-nomultistream2-3.png)
+![Alt text](./res_picture/run-trace-nomultistream2-4.png)
+![Alt text](./res_picture/run-trace-nomultistream2-5.png)
+
+【tc_offer/run_trace_multistream1-60fps.log】多流编码；固定I帧间隔
+![Alt text](./res_picture/run-trace-multistream1-60fps-1.png)
+![Alt text](./res_picture/run-trace-multistream1-60fps-2.png)
+![Alt text](./res_picture/run-trace-multistream1-60fps-3.png)
+![Alt text](./res_picture/run-trace-multistream1-60fps-4.png)
+![Alt text](./res_picture/run-trace-multistream1-60fps-5.png)
+
+【tc_offer/run_trace_multistream2.log】多流编码：回放关键帧
+【tc_offer/run_trace_nomultistream3.log】未采用多流编码，限速1000-2000-3000-2000-1000-500
+【tc_offer/run_trace_nomultistream4.log】未采用多流编码，不限速
+实际目标码率与限速的trace不一致的原因：限速时引入了延迟
+【tc_offer/run_trace_nomultistream5.log】
+【tc_offer/run_trace_nomultistream6.log】
+【tc_offer/run_trace_nomultistream7.log】
+【tc_offer/run_trace_multistream6.log】
+【tc_offer/run_trace_multistream7.log】
+
+#### Version 20210128
+1. 由于重启编码器产生I帧，干扰试验结果，优化方案是通过修改pyav实现实时码率调控不需要重启编码器
+   VideoCodecContext类（继承自CodecContext）
+   目标：通过设置视频编码器的上下文（VideoCodecContext）来调整编码速率
+    （1）修改CodecContext编码设置Options
+        options配置参考libavcodec/nvenc_h264.c
+    ```
+    static const AVOption options[] = {    
+        { "preset",   "Set the encoding preset",              OFFSET(preset),      AV_OPT_TYPE_INT,    { .i64 = PRESET_MEDIUM }, PRESET_DEFAULT, PRESET_LOSSLESS_HP, VE, "preset" },
+        { "default",    "",                                   0,                   AV_OPT_TYPE_CONST,  { .i64 = PRESET_DEFAULT }, 0, 0, VE, "preset" },
+        { "slow",       "hq 2 passes",                        0,                   AV_OPT_TYPE_CONST,  { .i64 = PRESET_SLOW }, 0, 0, VE, "preset" },
+        { "medium",     "hq 1 pass",                          0,                   AV_OPT_TYPE_CONST,  { .i64 = PRESET_MEDIUM }, 0, 0, VE, "preset" },
+        { "fast",       "hp 1 pass",                          0,                   AV_OPT_TYPE_CONST,  { .i64 = PRESET_FAST }, 0, 0, VE, "preset" },
+        { "hp",         "",                                   0,                   AV_OPT_TYPE_CONST,  { .i64 = PRESET_HP }, 0, 0, VE, "preset" },
+        { "hq",         "",                                   0,                   AV_OPT_TYPE_CONST,  { .i64 = PRESET_HQ }, 0, 0, VE, "preset" },
+        { "bd",         "",                                   0,                   AV_OPT_TYPE_CONST,  { .i64 = PRESET_BD }, 0, 0, VE, "preset" },
+        { "ll",         "low latency",                        0,                   AV_OPT_TYPE_CONST,  { .i64 = PRESET_LOW_LATENCY_DEFAULT }, 0, 0, VE, "preset" },
+        { "llhq",       "low latency hq",                     0,                   AV_OPT_TYPE_CONST,  { .i64 = PRESET_LOW_LATENCY_HQ }, 0, 0, VE, "preset" },
+        { "llhp",       "low latency hp",                     0,                   AV_OPT_TYPE_CONST,  { .i64 = PRESET_LOW_LATENCY_HP }, 0, 0, VE, "preset" },
+        { "lossless",   NULL,                                 0,                   AV_OPT_TYPE_CONST,  { .i64 = PRESET_LOSSLESS_DEFAULT }, 0, 0, VE, "preset" },
+        { "losslesshp", NULL,                                 0,                   AV_OPT_TYPE_CONST,  { .i64 = PRESET_LOSSLESS_HP }, 0, 0, VE, "preset" },
+        { "profile",  "Set the encoding profile",             OFFSET(profile),     AV_OPT_TYPE_INT,    { .i64 = NV_ENC_H264_PROFILE_HIGH }, NV_ENC_H264_PROFILE_BASELINE, NV_ENC_H264_PROFILE_CONSTRAINED_HIGH, VE, "profile" },
+        { "baseline", "",                                     0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_H264_PROFILE_BASELINE },            0, 0, VE, "profile" },
+        { "main",     "",                                     0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_H264_PROFILE_MAIN },                0, 0, VE, "profile" },
+        { "high",     "",                                     0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_H264_PROFILE_HIGH },                0, 0, VE, "profile" },
+        { "high_444", "",                                     0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_H264_PROFILE_HIGH_444 },            0, 0, VE, "profile" },
+        { "constrained_high", "",                             0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_H264_PROFILE_CONSTRAINED_HIGH },    0, 0, VE, "profile" },
+        { "level",    "Set the encoding level restriction",   OFFSET(level),       AV_OPT_TYPE_INT,    { .i64 = NV_ENC_LEVEL_AUTOSELECT }, NV_ENC_LEVEL_AUTOSELECT, NV_ENC_LEVEL_H264_51, VE, "level" },
+        { "auto",     "",                                     0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_LEVEL_AUTOSELECT }, 0, 0, VE, "level" },
+        { "1.0",      "",                                     0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_LEVEL_H264_1 },  0, 0, VE,  "level" },
+        { "1.b",      "",                                     0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_LEVEL_H264_1b }, 0, 0, VE,  "level" },
+        { "1.1",      "",                                     0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_LEVEL_H264_11 }, 0, 0, VE,  "level" },
+        { "1.2",      "",                                     0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_LEVEL_H264_12 }, 0, 0, VE,  "level" },
+        { "1.3",      "",                                     0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_LEVEL_H264_13 }, 0, 0, VE,  "level" },
+        { "2.0",      "",                                     0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_LEVEL_H264_2 },  0, 0, VE,  "level" },
+        { "2.1",      "",                                     0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_LEVEL_H264_21 }, 0, 0, VE,  "level" },
+        { "2.2",      "",                                     0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_LEVEL_H264_22 }, 0, 0, VE,  "level" },
+        { "3.0",      "",                                     0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_LEVEL_H264_3 },  0, 0, VE,  "level" },
+        { "3.1",      "",                                     0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_LEVEL_H264_31 }, 0, 0, VE,  "level" },
+        { "3.2",      "",                                     0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_LEVEL_H264_32 }, 0, 0, VE,  "level" },
+        { "4.0",      "",                                     0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_LEVEL_H264_4 },  0, 0, VE,  "level" },
+        { "4.1",      "",                                     0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_LEVEL_H264_41 }, 0, 0, VE,  "level" },
+        { "4.2",      "",                                     0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_LEVEL_H264_42 }, 0, 0, VE,  "level" },
+        { "5.0",      "",                                     0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_LEVEL_H264_5 },  0, 0, VE,  "level" },
+        { "5.1",      "",                                     0,                   AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_LEVEL_H264_51 }, 0, 0, VE,  "level" },
+        { "rc",       "Override the preset rate-control",     OFFSET(rc),          AV_OPT_TYPE_INT,    { .i64 = -1 },                   -1, INT_MAX, VE, "rc" },
+        { "constqp",          "Constant QP mode",                                                            0, AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_PARAMS_RC_CONSTQP },              0, 0, VE, "rc" },
+        { "vbr",              "Variable bitrate mode",                                                       0, AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_PARAMS_RC_VBR },                  0, 0, VE, "rc" },
+        { "cbr",              "Constant bitrate mode",                                                       0, AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_PARAMS_RC_CBR },                  0, 0, VE, "rc" },
+        { "vbr_minqp",        "Variable bitrate mode with MinQP",                                            0, AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_PARAMS_RC_VBR_MINQP },            0, 0, VE, "rc" },
+        { "ll_2pass_quality", "Multi-pass optimized for image quality (only for low-latency presets)",       0, AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_PARAMS_RC_2_PASS_QUALITY },       0, 0, VE, "rc" },
+        { "ll_2pass_size",    "Multi-pass optimized for constant frame size (only for low-latency presets)", 0, AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_PARAMS_RC_2_PASS_FRAMESIZE_CAP }, 0, 0, VE, "rc" },
+        { "vbr_2pass",        "Multi-pass variable bitrate mode",                                            0, AV_OPT_TYPE_CONST,  { .i64 = NV_ENC_PARAMS_RC_2_PASS_VBR },           0, 0, VE, "rc" },
+        { "surfaces", "Number of concurrent surfaces",        OFFSET(nb_surfaces), AV_OPT_TYPE_INT,    { .i64 = 0 },                    0, MAX_REGISTERED_FRAMES, VE },
+        { "device",   "Select a specific NVENC device",       OFFSET(device),      AV_OPT_TYPE_INT,    { .i64 = -1 },                   -2, INT_MAX, VE, "device" },
+        { "any",      "Pick the first device available",      0,                   AV_OPT_TYPE_CONST,  { .i64 = ANY_DEVICE },           0, 0, VE, "device" },
+        { "list",     "List the available devices",           0,                   AV_OPT_TYPE_CONST,  { .i64 = LIST_DEVICES },         0, 0, VE, "device" },
+        { "async_depth", "Delay frame output by the given amount of frames", OFFSET(async_depth), AV_OPT_TYPE_INT, { .i64 = INT_MAX }, 0, INT_MAX, VE },
+        { "delay",       "Delay frame output by the given amount of frames", OFFSET(async_depth), AV_OPT_TYPE_INT, { .i64 = INT_MAX }, 0, INT_MAX, VE },
+    #if NVENCAPI_MAJOR_VERSION >= 7
+        { "rc-lookahead", "Number of frames to look ahead for rate-control", OFFSET(rc_lookahead), AV_OPT_TYPE_INT, { .i64 = 0 }, -1, INT_MAX, VE },
+        { "no-scenecut", "When lookahead is enabled, set this to 1 to disable adaptive I-frame insertion at scene cuts", OFFSET(no_scenecut), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, VE },
+        { "b_adapt", "When lookahead is enabled, set this to 0 to disable adaptive B-frame decision", OFFSET(b_adapt), AV_OPT_TYPE_INT, { .i64 = 1 }, 0, 1, VE },
+        { "spatial-aq", "set to 1 to enable Spatial AQ", OFFSET(aq), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, VE },
+        { "temporal-aq", "set to 1 to enable Temporal AQ",     OFFSET(temporal_aq),  AV_OPT_TYPE_INT,   { .i64 = 0                       }, 0, 1, VE        },
+        { "zerolatency", "Set 1 to indicate zero latency operation (no reordering delay)", OFFSET(zerolatency), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, VE },
+        { "nonref_p", "Set this to 1 to enable automatic insertion of non-reference P-frames", OFFSET(nonref_p), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, VE },
+        { "strict_gop", "Set 1 to minimize GOP-to-GOP rate fluctuations", OFFSET(strict_gop), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, VE },
+        { "aq-strength", "When Spatial AQ is enabled, this field is used to specify AQ strength. AQ strength scale is from 1 (low) - 15 (aggressive)", OFFSET(aq_strength), AV_OPT_TYPE_INT, { .i64 = 8 }, 1, 15, VE },
+        { "cq", "Set target quality level (0 to 51, 0 means automatic) for constant quality mode in VBR rate control", OFFSET(quality), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 51, VE },
+    #endif /* NVENCAPI_MAJOR_VERSION >= 7 */
+        { "init_qpP", "Initial QP value for P-frames",        OFFSET(init_qp_p),   AV_OPT_TYPE_INT,    { .i64 = -1 }, -1, 51, VE },
+        { "init_qpB", "Initial QP value for B-frames",        OFFSET(init_qp_b),   AV_OPT_TYPE_INT,    { .i64 = -1 }, -1, 51, VE },
+        { "init_qpI", "Initial QP value for I-frames",        OFFSET(init_qp_i),   AV_OPT_TYPE_INT,    { .i64 = -1 }, -1, 51, VE },
+        { NULL }
+
+    ```
+    （2）修改context.pyx
+    增加两个属性：
+    property rc_buffer_size:
+        def __get__(self):
+            return self.ptr.rc_buffer_size if self.ptr.rc_buffer_size > 0 else None
+        def __set__(self,int value):
+            self.ptr.rc_buffer_size=value
+    property rc_max_rate:
+        def __get__(self):
+            return self.ptr.rc_max_rate if self.ptr.rc_max_rate > 0 else None
+        def __set__(self,int value):
+            self.ptr.rc_max_rate=value
+    （3）修改videocontext.pyx：增加reconfig_encoder接口
+    （4）修改acodec.pxd，增加x264.h头文件包装
+    （5）重新编译安装
+        conda环境：aoirtc-pyav
+        编译：cd PyAV && python setup.py build_ext --inplace
+        安装：pip install .
+2. 修改timestamp bug，同一张视频帧timestamp应该是唯一且相同的，但这样修改会导致同一张有多个版本时只解码了最先到达的
+   所以目前的版本是每次编码是唯一的timestamp
 ## TC
 1. 准备一个至少两个网卡的linux主机作为tc
-   
-   ![Alt text](img_v3_025j_5a837f6a-4d3d-4f8e-a075-40199d8dedfg.jpg)
+   tc： ying@192.168.31.23 密码：19981222
+   receiver：yan@192.168.31.228 密码：118040
+   ![Alt text](.assert/img_v3_025j_5a837f6a-4d3d-4f8e-a075-40199d8dedfg.jpg)
+   ![Alt text](.assert/clPYcKAugi.jpg)

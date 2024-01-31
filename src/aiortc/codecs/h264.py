@@ -16,7 +16,7 @@ from .base import Decoder, Encoder
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BITRATE = 1000000  # 3000 kbps
+DEFAULT_BITRATE = 100000  # 3000 kbps
 MIN_BITRATE = 100000  # 500 kbps
 MAX_BITRATE = 3000000  # 3 Mbps 2500000
 
@@ -218,10 +218,13 @@ def create_encoder_context(
     codec.pix_fmt = "yuv420p"
     codec.framerate = fractions.Fraction(MAX_FRAME_RATE, 1)
     codec.time_base = fractions.Fraction(1, MAX_FRAME_RATE)
+    codec.rc_buffer_size=bitrate*0.9 
+    codec.rc_max_rate=bitrate*0.9
     codec.options = {
         "profile": "main",# baseline, main, high, high10, high422, high444.
         "level": "31",
         "tune": "zerolatency",  # does nothing using h264_omx
+        "rc":"vbr"
     }
     codec.gop_size = 99999  # GOP (Group of Pictures) 大小
     if "crf" in codec.options:
@@ -366,16 +369,21 @@ class H264Encoder(Encoder):
         self, frame: av.VideoFrame, force_keyframe: bool
     ) -> Iterator[bytes]:
         """检查帧尺寸和比特率是否与先前的编码器匹配：如果尺寸不一致或比特率变化超过10%，重新初始化编码器"""
-        if self.codec and (
-            frame.width != self.codec.width
-            or frame.height != self.codec.height
-            # we only adjust bitrate if it changes by over 10%
-            or abs(self.target_bitrate - self.codec.bit_rate) / self.codec.bit_rate
-            > 0.1
-        ):
-            self.buffer_data = b""
-            self.buffer_pts = None
-            self.codec = None
+        # if self.codec and (
+        #     frame.width != self.codec.width
+        #     or frame.height != self.codec.height
+        #     # we only adjust bitrate if it changes by over 10%
+        #     or abs(self.target_bitrate - self.codec.bit_rate) / self.codec.bit_rate
+        #     > 0.1
+        # ):
+        #     self.buffer_data = b""
+        #     self.buffer_pts = None
+        #     self.codec = None
+        # if self.codec:
+            # self.codec.width=frame.width
+            # self.codec.height=frame.height
+            # self.codec.bit_rate=self.target_bitrate
+            
         """是否需要强制生成关键帧"""
         if force_keyframe:
             # force a complete image
@@ -397,6 +405,7 @@ class H264Encoder(Encoder):
                 logger.error("libx264 error")
         """循环编码"""
         data_to_send = b""
+        self.codec.reconfig_encoder(self.target_bitrate)
         for package in self.codec.encode(frame):
             package_bytes = bytes(package)
             if self.codec_buffering:#如果有buffer缓冲区：延迟发送以确保累计所有给定PTS的数据

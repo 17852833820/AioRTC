@@ -372,7 +372,7 @@ class RTCRtpSender():
         self.__force_keyframe = True
     async def _next_encoded_frame_two(self, codec: RTCRtpCodecParameters)->None:
             # 设置关键帧
-            if  self.encode_role_forwart and self.encode_mode.current_state=="S1":
+            if self.use_multistream and  self.encode_role_forwart and self.encode_mode.current_state=="S1":
                 self._send_keyframe()
             audio_level = None
             #如果编码器未初始化，获取一个适用于给定编解码器参数的编码器
@@ -523,8 +523,9 @@ class RTCRtpSender():
         self.__log_debug('[FRAME_INFO] Timestamp_origin: %d, Sequence_number: %d',timestamp_origin, sequence_number)
         frame_number=0
         last_key_frame=0
-        with open("./log/keyframe/log41.txt", 'r') as file:
-            keyframe = [int(line.strip()) for line in file]
+        timestamps={}
+        # with open("./log/keyframe/run-trace-nomultistream6.txt", 'r') as file:
+        #     keyframe = [int(line.strip()) for line in file]
         try:
             while True:#主循环：不断获取下一个编码帧，遍历帧中的payload并创建RTP数据包发送
                 if not self.__track:
@@ -534,25 +535,29 @@ class RTCRtpSender():
                 # 编码下一帧
                 self._data = await self.__track.recv()
                 queue_time=self.pace_sender.expected_queue_time()
-                # self.__log_debug('[FRAME_INFO] Number: %d, PTS: %d, queue_time: %d ms', frame_number,timestamp, queue_time.total_seconds()*1000)
-                # if self._data.index%30==0 and self._data.index>=30:
-                if frame_number in keyframe:
-                        self.encode_mode.transition("S1")#转换到S1:出现关键帧
-                        self.encode_role_forwart=not self.encode_role_forwart
-                        last_key_frame=frame_number
-                # if self._data.index%30==1 and self._data.index>=30:
-                if frame_number==last_key_frame+1:
+                # 产生I帧的两种情况
+                if self._data.index%60==0 and self._data.index>=60:
+                # if frame_number in keyframe:
+                            self.encode_mode.transition("S1")#转换到S1:出现关键帧
+                            self.encode_role_forwart=not self.encode_role_forwart
+                            # last_key_frame=frame_number
+                if self._data.index%60==1 and self._data.index>=60:
+                # if frame_number==last_key_frame+1:
                     self.encode_mode.transition("S2")#转换到S2：一张关键帧编码完成开始传输
-                # if  self._data.index%30==5 and self._data.index>=30:
+                # if  self._data.index%60==5 and self._data.index>=60:
                 #     self.encode_mode.transition("S3")#转换到S3：关键帧传输完成
                
                 # 对于正常P帧编码的stream，正常传输直到编码器停止返回None
                 # if not self.condition_Finish_event.is_set() and enc_frame:
                 if  (self.encode_role_forwart and self.encode_mode.current_state!="S3") or (not self.encode_role_forwart and self.encode_mode.current_state!="S2"):
                     enc_frame, enc_dur ,frame_type,frame_size= await self._next_encoded_frame(codec) #返回了一帧图像编码后产生的数据：编码打包后的packet列表和时间戳，enc_dur为编码一张图像花费的时间
+                    # if frame_number not in timestamps:
                     timestamp = uint32_add(timestamp_origin, enc_frame.timestamp)
-                    self.__log_debug('[FRAME_INFO] Stream id : 1, Number: %d, PTS: %d, enc_dur: %d Type: %s, size: %d, queue_time: %d ms', frame_number,timestamp, enc_dur,frame_type.name,frame_size,queue_time.total_seconds()*1000)
-                    # 遍历每个packet并为其创建一个RTP数据包
+                    #     timestamps[frame_number]=timestamp
+                    # else:
+                    #     timestamp=timestamps[frame_number]
+                    self.__log_debug('[FRAME_INFO] Stream id : 1, Number: %d, PTS: %d, enc_dur: %d Type: %s, size: %d, queue_time: %d ms', frame_number,timestamp-timestamp_origin, enc_dur,frame_type.name,frame_size,queue_time.total_seconds()*1000)
+                    # 遍历每个packet并为其创建一个RTP数据包                           
                     packets=[]
                     for i, payload in enumerate(enc_frame.payloads):
                         #=======================================Version 1===============================================
@@ -628,8 +633,12 @@ class RTCRtpSender():
                 # if (enc_frame_two and (frame_type_two.value==0 or frame_type_two.value == 4)) or (enc_frame_two and self.condition_Finish_event.is_set()):
                 if  (self.encode_role_forwart and self.encode_mode.current_state!="S2") or (not self.encode_role_forwart and self.encode_mode.current_state!="S3" and self.encode_mode.current_state!="S0"):
                     enc_frame_two, enc_dur_two ,frame_type_two,frame_size_two= await self._next_encoded_frame_two(codec) #返回了一帧图像编码后产生的数据：编码打包后的packet列表和时间戳，enc_dur为编码一张图像花费的时间
+                    # if frame_number not in timestamps:
                     timestamp = uint32_add(timestamp_origin, enc_frame_two.timestamp)
-                    self.__log_debug('[FRAME_INFO] Stream id : 2, Number: %d, PTS: %d, enc_dur: %d Type: %s, size: %d, queue_time: %d ms', frame_number,timestamp, enc_dur_two,frame_type_two.name,frame_size_two,queue_time.total_seconds()*1000)
+                    #     timestamps[frame_number]=timestamp
+                    # else:
+                    #     timestamp=timestamps[frame_number]
+                    self.__log_debug('[FRAME_INFO] Stream id : 2, Number: %d, PTS: %d, enc_dur: %d Type: %s, size: %d, queue_time: %d ms', frame_number,timestamp-timestamp_origin, enc_dur_two,frame_type_two.name,frame_size_two,queue_time.total_seconds()*1000)
                     packets=[]
                     for i, payload in enumerate(enc_frame_two.payloads):
                         #=======================================Version 1===============================================
@@ -645,7 +654,7 @@ class RTCRtpSender():
                         timestamp=timestamp,
                         payload=payload,
                         ssrc=self._ssrc,
-                        marker = (i == len(enc_frame.payloads) - 1) and 1 or 0 
+                        marker = (i == len(enc_frame_two.payloads) - 1) and 1 or 0 
                         )
                         if  (self.encode_role_forwart and  self.encode_mode.current_state=="S3") or (not self.encode_role_forwart and (self.encode_mode.current_state=="S1" or self.encode_mode.current_state=="S2")):
                             packet.set_packet_type(RtpPacketMediaType.kVideo1)

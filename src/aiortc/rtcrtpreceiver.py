@@ -467,7 +467,7 @@ class UniqueQueue(asyncio.Queue):
         if self.full():
             raise asyncio.QueueFull
         # check index 
-        if item.pts >= self.last_pts: # fix join bug
+        if item.pts > self.last_pts: # fix join bug
             self._put(item)
             # self.index_list.append(item.index)
             self.last_pts=item.pts
@@ -519,9 +519,9 @@ class TimestampMapper:
         if self._origin is None:
             # first timestamp
             self._origin = timestamp
-        elif timestamp < self._last:
-            # RTP timestamp wrapped
-            self._origin -= 1 << 32
+        # elif timestamp < self._last:
+        #     # RTP timestamp wrapped
+        #     self._origin -= 1 << 32
 
         self._last = timestamp
         return timestamp - self._origin
@@ -880,12 +880,12 @@ class RTCRtpReceiver:
             await self._send_rtcp_pli(packet.ssrc)
 
         # if we have a complete encoded frame, decode it 将解码请求放入解码器队列__decoder_queue
-        if encoded_frame is not None and self.__decoder_thread:
+        if encoded_frame is not None  :
             encoded_frame.timestamp = self.__timestamp_mapper.map(
                 encoded_frame.timestamp
             )#获得了frame的pts
             encoded_frame.times_dur['time_in_dec_q'] = clock.current_ms()
-            if self.use_multistream and encoded_frame.stream_id == "2":
+            if self.__decoder_thread2 and self.use_multistream and encoded_frame.stream_id == "2":
                 self.__decoder_queue2.put((codec, encoded_frame))
                 self.__decoder_thread2.set_frame_rate(self._track.fps)
                 logger.debug("Receive Frame timestamp:{0},Push frame queue2".format(encoded_frame.timestamp))
