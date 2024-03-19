@@ -16,7 +16,7 @@ from .base import Decoder, Encoder
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BITRATE = 100000  # 3000 kbps
+DEFAULT_BITRATE = 2500000  # 3000 kbps
 MIN_BITRATE = 100000  # 500 kbps
 MAX_BITRATE = 3000000  # 3 Mbps 2500000
 
@@ -218,15 +218,15 @@ def create_encoder_context(
     codec.pix_fmt = "yuv420p"
     codec.framerate = fractions.Fraction(MAX_FRAME_RATE, 1)
     codec.time_base = fractions.Fraction(1, MAX_FRAME_RATE)
-    codec.rc_buffer_size=bitrate*0.9 
-    codec.rc_max_rate=bitrate*0.9
+    codec.rc_buffer_size=bitrate*5
+    codec.rc_max_rate=bitrate*1.25
     codec.options = {
         "profile": "main",# baseline, main, high, high10, high422, high444.
         "level": "31",
         "tune": "zerolatency",  # does nothing using h264_omx
         "rc":"vbr"
     }
-    codec.gop_size = 99999  # GOP (Group of Pictures) 大小
+    codec.gop_size = 60  # GOP (Group of Pictures) 大小
     if "crf" in codec.options:
         del codec.options["crf"]
     # codec.qmin = 30  # 最小量化器

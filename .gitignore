@@ -21,7 +21,9 @@
 /receive_data/
 # Environments
 .env
+./PyAV/
 .venv
+/vendor
 env/
 venv/
 ENV/
@@ -29,3 +31,5 @@ env.bak/
 venv.bak/
 
 
+/log/
+/PyAV

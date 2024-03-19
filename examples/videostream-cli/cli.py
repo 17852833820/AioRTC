@@ -10,10 +10,12 @@ import numpy
 import av
 from av import VideoFrame
 print(av.__version__)
-sys.path.append("/Users/ying/Library/CloudStorage/OneDrive-hust.edu.cn/Documents/毕业论文/新题-实验/Project/aiortc/")
+sys.path.append("/Users/ying/Library/CloudStorage/OneDrive-hust.edu.cn/Documents/Paper/New-Exeperment/Project/aiortc/")
  # sys.path.append("/mnt/e/ying/OneDrive - hust.edu.cn/Documents/毕业论文/新题-实验/Project/aiortc")
-from src.aiortc import (RTCIceCandidate, RTCPeerConnection,
-                        RTCSessionDescription, VideoStreamTrack)
+from src.aiortc.rtcicetransport import RTCIceCandidate
+from src.aiortc.rtcpeerconnection import RTCPeerConnection
+from src.aiortc.rtcsessiondescription import RTCSessionDescription
+from src.aiortc.mediastreams import  VideoStreamTrack
 from src.aiortc.contrib.media import MediaBlackhole, MediaPlayer, MediaRecorder
 from src.aiortc.contrib.signaling import (BYE, add_signaling_arguments,
                                           create_signaling)
@@ -143,8 +145,8 @@ if __name__ == "__main__":
         # 设置日志级别
         logger.setLevel(logging.DEBUG)
         # 根据角色设置日志文件路径
-        log_directory = f"log/{args.role}/"
-        log_file = f"{log_directory}test-dev.log"
+        log_directory = f"log/res_{args.role}/"
+        log_file = f"{log_directory}run1.log"
         logging.basicConfig(filename=log_file, level=logging.DEBUG,format='%(asctime)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'  )
         # 确保目录存在

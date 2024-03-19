@@ -4,7 +4,8 @@ import logging
 import os
 import sys
 
-from src.aiortc import RTCIceCandidate, RTCSessionDescription
+from src.aiortc.rtcicetransport import RTCIceCandidate
+from src.aiortc.rtcsessiondescription import RTCSessionDescription
 from src.aiortc.sdp import candidate_from_sdp, candidate_to_sdp
 
 logger = logging.getLogger(__name__)

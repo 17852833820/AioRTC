@@ -50,7 +50,16 @@ class RTCEncodedFrame:
         self.payloads = payloads
         self.timestamp = timestamp
         self.audio_level = audio_level
-  
+amplitude = 1200000.0  # 振幅
+frequency = 1.0  # 频率（每秒的周期数）
+duration = 10.0   # 持续时间（秒）
+sample_rate = 2000  # 采样率
+import math
+# 生成正弦波形数据
+num_samples = int(duration * sample_rate)
+time_points = [i / sample_rate for i in range(num_samples)]
+sin_wave =[ 1500000+amplitude * math.sin(2 * math.pi * frequency * t) for t in time_points]
+
 class RTCRtpSender():
     """
     The :class:`RTCRtpSender` interface provides the ability to control and
@@ -125,6 +134,9 @@ class RTCRtpSender():
         self.encode_mode=MultiEncodeMode()
         self.encode_role_forwart=False #前向：stream1向stream2切换，否则stream2向stream1切换
         self.pace_sender:Optional[PacedSender]=None
+        self.bitrate_time:int=clock.current_ms()
+        self.number:int=0
+        
     @property
     def kind(self):
         return self.__kind
@@ -254,7 +266,7 @@ class RTCRtpSender():
                         self.__rtt = rtt
                     else:
                         self.__rtt = RTT_ALPHA * self.__rtt + (1 - RTT_ALPHA) * rtt
-                # self.__log_debug('[FRAME_INFO] loss rate: %f %', report.packets_lost)
+                # self.__log_debug('[FRAME_INFO] report loss rate: %f %', report.packets_lost)
 
                 self.__stats.add(
                     RTCRemoteInboundRtpStreamStats(
@@ -289,6 +301,14 @@ class RTCRtpSender():
         elif isinstance(packet, RtcpPsfbPacket) and packet.fmt == RTCP_PSFB_APP:
             try:
                 bitrate, ssrcs = unpack_remb_fci(packet.fci)#REMB反馈的带宽估计
+                # if clock.current_ms()-self.bitrate_time<60000:# 60s
+                #     bitrate=2500000
+                # if clock.current_ms()-self.bitrate_time>60000:# 600s
+                #     bitrate=1000000
+                #     bitrate=500000
+                # bitrate=sin_wave[self.number]
+                # self.number+=1
+                # bitrate=500000
                 if self._ssrc in ssrcs:
                     # 更新编码速率
                     if self.__encoder and hasattr(self.__encoder, "target_bitrate"):

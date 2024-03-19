@@ -1,0 +1,39 @@
+## 1.实验一：固定码率实验
+### 1.1 场景一：街道
+固定码率直接控制编码器测试所有指标的mean和std
+实验设置：GOP=2s
+带宽：直线限速
+#### （1）直线限速0.5Mbps
+send_file="./offer/run-trace-test61.log"
+P帧大小：mean，std
+mean P_framesize:2580.4426395939086,std P_framesize:166.72845185817084
+I帧大小：
+mean I_framesize:4063.0625,std I_framesize:808.7589619866663
+I帧前后3张P帧的大小：
+mean P_average_size_perI:2280.895833333333,std P_average_size_perI:198.39486856148218
+I帧大小/前后3张P帧平均大小：
+mean IPrate_3:1.8212238193336334,std IPrate_3:0.5012847330191006
+I帧大小/前后所有P帧平均大小：
+mean IPrate_all:1.5706699627844471,std IPrate_all:0.31503714228083224
+#### （2）直线限速1.0Mbps
+send_file="./offer/run-trace-test62.log"
+mean P_framesize:5058.967828418231,std P_framesize:789.6800060296497
+mean I_framesize:13916.315789473685,std I_framesize:6858.591792340554
+mean P_average_size_perI:3556.1052631578946,std P_average_size_perI:808.0493880209742
+mean IPrate_3:4.647488879119303,std IPrate_3:3.4829470560502256
+mean IPrate_all:2.792759221530295,std IPrate_all:1.3911318555906513
+#### （3）直线限速1.5Mbps
+send_file="./offer/run-trace-test63.log"
+mean P_framesize:7288.820825352604,std P_framesize:1629.4372726380657
+mean I_framesize:38584.52475247525,std I_framesize:36524.96850713778
+mean P_average_size_perI:6724.118811881188,std P_average_size_perI:2227.4294295827926
+mean IPrate_3:7.6912554941229105,std IPrate_3:10.838350334268977
+mean IPrate_all:5.402254215260889,std IPrate_all:5.255828301878845
+#### （4）直线限速2.0Mbps
+send_file="./offer/run-trace-test64.log"
+mean P_framesize:7999.616971740526,std P_framesize:2757.594053168861
+mean I_framesize:111551.80276816609,std I_framesize:51985.1646358237
+mean P_average_size_perI:4839.840830449827,std P_average_size_perI:2219.7479925357984
+mean IPrate_3:35.47653028648914,std IPrate_3:32.77095438744076
+mean IPrate_all:13.335514990177803,std IPrate_all:6.3502033222503
+

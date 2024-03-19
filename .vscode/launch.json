@@ -1,23 +1,41 @@
 {
-    // Use IntelliSense to learn about possible attributes.
-    // Hover to view descriptions of existing attributes.
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
-    "version": "0.2.0",
-    "configurations": [
-        {
-            "name": "videostream-cli",
-            "type": "python",
-            "request": "launch",
-            "program": "${workspaceFolder}/examples/videostream-cli/cli.py",
-            // "program": "${workspaceFolder}/log/analyses.py",
-            // "program": "${workspaceFolder}/examples/server/server.py",
-            "console": "integratedTerminal",
-            "justMyCode": true,
-            // 
-            "args": ["offer","--play-from","./dataset/driving.mp4","-v","-s", "tcp-socket","--signaling-host","192.168.31.238","--signaling-port", "1235"]
-            // "args": ["answer", "--record-to","./receive_data/anamal-1080p.mp4","-v","-s","tcp-socket","--signaling-port","3215"]
-            // "args": ["answer", "--record-to","./receive_data/anamal-1080p.mp4","-v","-s","tcp-socket","--signaling-host","192.168.31.228","--signaling-port","1235"]
-
-        }
-    ]
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "videostream-cli",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/examples/videostream-cli/cli.py",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      // "args": [
+      //   "offer",
+      //   "--play-from",
+      //   "./dataset/driving.mp4",
+      //   "-v",
+      //   "-s",
+      //   "tcp-socket",
+      //   "--signaling-port",
+      //   "1236"
+      // ]
+    "args": [
+        "answer",
+        "--record-to",
+        "./receive_data/driving.mp4",
+        "-v",
+        "-s",
+        "tcp-socket",
+        "--signaling-port",
+        "1236"
+      ]
+    },
+    {
+      "name": "C/C++ Runner: Debug Session",
+      "type": "lldb",
+      "request": "launch",
+      "args": [],
+      "cwd": "/Users/ying/Library/CloudStorage/OneDrive-hust.edu.cn/Documents/Paper/New-Exeperment/Project/aiortc/vendor/ffmpeg-6.0/libavformat",
+      "program": "/Users/ying/Library/CloudStorage/OneDrive-hust.edu.cn/Documents/Paper/New-Exeperment/Project/aiortc/vendor/ffmpeg-6.0/libavformat/build/Debug/outDebug"
+    }
+  ]
 }
