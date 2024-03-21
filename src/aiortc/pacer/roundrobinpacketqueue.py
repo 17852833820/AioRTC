@@ -232,7 +232,7 @@ class RoundRobinPacketQueue:
         if rtp_packet.is_first_packet_of_frame():
             outqueue_time=clock.current_datetime()
             pacer_time=(outqueue_time-queued_packet.enqueue_time()).total_seconds()*1000 #ms
-            logger.info("Pacer Queue | Pop Packet enqueue_time: {0}, outqueue_time: {1}, is key frame: {2}, pacer_time: {3} ms, priority: {4}, packet_type: {5},queue_packet: {6},queue_datasizeL {7}".format(queued_packet.enqueue_time(),outqueue_time,rtp_packet._is_key_frame,pacer_time,queued_packet.priority(),rtp_packet.packet_type().name,self._size_packets,self._size))
+            logger.info("Pacer Queue | Pop Packet enqueue_time: {0}, outqueue_time: {1}, is key frame: {2}, pacer_time: {3} ms, timestamp: {4}, priority: {5}, packet_type: {6},queue_packet: {7},queue_datasizeL {8}".format(queued_packet.enqueue_time(),outqueue_time,rtp_packet._is_key_frame,pacer_time,rtp_packet.timestamp,queued_packet.priority(),rtp_packet.packet_type().name,self._size_packets,self._size))
         return rtp_packet
 
     # queue是否为空

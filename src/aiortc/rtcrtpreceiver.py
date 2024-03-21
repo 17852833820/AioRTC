@@ -5,6 +5,7 @@ import queue
 import random
 import threading
 import time
+import json
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Set
 import collections
@@ -387,11 +388,12 @@ class StreamStatistics:
         self._jitter_q4 = 0
         self._last_arrival: Optional[int] = None
         self._last_timestamp: Optional[int] = None
-
+        self._recvrate:Optional[int]=0
         # fraction lost
         self._expected_prior = 0
         self._received_prior = 0
-
+    def setrecvrate(self,recv)->None:
+        self._recvrate=recv
     def add(self, packet: RtpPacket) -> None:
         in_order = self.max_seq is None or uint16_gt(
             packet.sequence_number, self.max_seq
@@ -417,15 +419,17 @@ class StreamStatistics:
 
             self._last_arrival = arrival
             self._last_timestamp = packet.timestamp
-
+    @property
+    def recvrate(self) -> int:
+        return self._recvrate
     @property
     def fraction_lost(self) -> int:
-        expected_interval = self.packets_expected - self._expected_prior
+        expected_interval = self.packets_expected - self._expected_prior #期待的包数量的变化，即上一次时间段应收包数量和本次应收包数量的差距
         self._expected_prior = self.packets_expected
-        received_interval = self.packets_received - self._received_prior
+        received_interval = self.packets_received - self._received_prior #实际接收的包数量的变化，即上一次时间段收到的包数量和本次收到的包数量的差距
         self._received_prior = self.packets_received
-        lost_interval = expected_interval - received_interval
-        if expected_interval == 0 or lost_interval <= 0:
+        lost_interval = expected_interval - received_interval #丢包数量的变化，上一次的丢包数量-本次丢包数量
+        if expected_interval == 0 or lost_interval <= 0: 
             return 0
         else:
             return (lost_interval << 8) // expected_interval
@@ -568,12 +572,17 @@ class RTCRtpReceiver:
 
         self.__active_ssrc: Dict[int, datetime.datetime] = {}
         self.__codecs: Dict[int, RTCRtpCodecParameters] = {}
+        with open('./src/aiortc/config/config.json', 'r') as file:
+            self.config=json.load(file)
         self.__decoder_queue: queue.Queue = queue.Queue()
         self.__decoder_queue2: queue.Queue = queue.Queue()
         # self.__decoder_thread: Optional[threading.Thread] = None
         # self.__decoder_thread2: Optional[threading.Thread] = None
         self.__decoder_thread:FrameDecoder=FrameDecoder("-decoder1")
         self.__decoder_thread2:FrameDecoder=FrameDecoder("-decoder2")
+                # 是否采用多流
+        self.use_multistream =self.config["is_multistream"]
+        self.ABRMode=self.config["ABRControl"]["Mode"]#GCC, Fixed, PPO, Rate
         self.__kind = kind
         if kind == "audio":
             self.__jitter_buffer = JitterBuffer(capacity=16, prefetch=4)
@@ -582,7 +591,11 @@ class RTCRtpReceiver:
         else:
             self.__jitter_buffer = JitterBuffer(capacity=128, is_video=True)
             self.__nack_generator = NackGenerator()
+            # if self.ABRMode=="PPO":
+                # self.__remote_bitrate_estimator = PPOBitrateEstimator()
+            # else:
             self.__remote_bitrate_estimator = RemoteBitrateEstimator()
+            
         self._track: Optional[RemoteStreamTrack] = None
         self.__rtcp_exited = asyncio.Event()
         self.__rtcp_started = asyncio.Event()
@@ -614,8 +627,7 @@ class RTCRtpReceiver:
         self.last_arrival_bytes=0
         self.last_count=0
         self.recv_count=0
-        # 是否采用多流
-        self.use_multistream =True
+
     @property
     def track(self) -> MediaStreamTrack:
         """
@@ -745,7 +757,7 @@ class RTCRtpReceiver:
     def _handle_disconnect(self) -> None:
         self.__stop_decoder()
 
-    async def _handle_rtcp_packet(self, packet: AnyRtcpPacket) -> None:
+    async def _handle_rtcp_packet(self, packet: AnyRtcpPacket) -> None: #收到SR包,更新lsr
         self.__log_debug("< %s", packet)
         if isinstance(packet, RtcpSrPacket):
             self.__stats.add(
@@ -782,10 +794,11 @@ class RTCRtpReceiver:
 
         # feed bitrate estimato 如果启用了远程带宽估计：收到RTP包时更新带宽估计
         if self.__remote_bitrate_estimator is not None:
+            
             if packet.extensions.abs_send_time is not None:#RTP 包包含绝对发送时间
                 remb = self.__remote_bitrate_estimator.add(
-                    abs_send_time=packet.extensions.abs_send_time,
-                    arrival_time_ms=arrival_time_ms,
+                    abs_send_time=packet.extensions.abs_send_time,# 绝对发送时间
+                    arrival_time_ms=arrival_time_ms, #到达时间
                     payload_size=len(packet.payload) + packet.padding_size,
                     ssrc=packet.ssrc,
                 )
@@ -798,6 +811,7 @@ class RTCRtpReceiver:
                         fci=pack_remb_fci(*remb),
                     )
                     await self._send_rtcp(rtcp_packet)
+            
         # 计算 frame 传输延迟
         # if packet.extensions.abs_send_time is not None and packet.extensions.marker_first=="1": #第一个packet的发送时间
         #     self.first_send_time=packet.extensions.abs_send_time
@@ -809,8 +823,6 @@ class RTCRtpReceiver:
         if  packet.marker: #最后一个包
             self.last_recv_time=arrival_time_ms
             self.__log_debug('[FRAME_INFO] T: %d , is key frame: %d, frame packet dur: %d ms',packet.timestamp,packet._is_key_frame,self.last_recv_time-self.first_recv_time)
-            # 统计额外的P帧的接收速率
-    
         if packet._is_first_packet_of_frame:# 第一个包
             self.first_recv_time=arrival_time_ms
         packet.set_recv_time_ms(arrival_time_ms)
@@ -834,6 +846,7 @@ class RTCRtpReceiver:
                 for ssrc, stream in self.__remote_streams.items():
                     self.recv_rate=((stream.bytes_received-self.last_arrival_bytes)*8)/((arrival_time_ms-self.last_arrival_time)/1000)
                     self.recv_count=stream.packets_received-self.last_count
+                    stream.setrecvrate(self.recv_rate)
                     self.__log_debug('[Recv_INFO] ssrc: %d, timestamp: %d,recv rate: %f bps, count_received: %d', ssrc,arrival_time_ms,self.recv_rate, self.recv_count)
                     self.last_arrival_bytes=stream.bytes_received
                     self.last_count=stream.packets_received
@@ -899,7 +912,7 @@ class RTCRtpReceiver:
                 logger.info("input queue size:{0}".format(self.__decoder_queue.qsize()))
 
 
-    async def _run_rtcp(self) -> None:
+    async def _run_rtcp(self) -> None: #不定时报告RR包，lsr是上一次收到SR包的时间
         self.__log_debug("- RTCP started")
         self.__rtcp_started.set()
 
@@ -907,7 +920,7 @@ class RTCRtpReceiver:
             while True:
                 # The interval between RTCP packets is varied randomly over the
                 # range [0.5, 1.5] times the calculated interval.
-                await asyncio.sleep(0.5 + random.random())
+                await asyncio.sleep(1 + random.random())
 
                 # RTCP RR
                 reports = []
@@ -923,12 +936,14 @@ class RTCRtpReceiver:
                     reports.append(
                         RtcpReceiverInfo(
                             ssrc=ssrc,
-                            fraction_lost=stream.fraction_lost,
-                            packets_lost=stream.packets_lost,
+                            fraction_lost=stream.fraction_lost,# 计算方式：丢包率
+                            packets_lost=stream.packets_lost, #计算方式：实际丢包数量
                             highest_sequence=stream.max_seq,
-                            jitter=stream.jitter,
+                            jitter=stream.jitter,# 计算方式
                             lsr=lsr,
-                            dlsr=dlsr,
+                            dlsr=dlsr, #本次接收到发送的时间
+                            ## 增加上报给发送端的参数 rtt——ms，rtt jitter，packet lost rate，recv rate bps
+                            recvrate=int(stream.recvrate) #bps
                         )
                     )
 

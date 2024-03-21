@@ -980,16 +980,174 @@ dev-未统一开始时间
         def __set__(self,int value):
             self.ptr.rc_max_rate=value
     （3）修改videocontext.pyx：增加reconfig_encoder接口
+        在使用VBR（可变率控制）的方式编码时，如何设置参数值才能让码率处在期望的范围内
+        rc.i_vbv_buffer_size：解码器缓冲区的大小，设置太小会导致播放时画面显示不全，设置太大会导致码率飙升，作用是处理各帧编码后大小不一和恒定输出码率的矛盾
+        rc.i_vbv_max_bitrate：平均码率模式下，最大瞬时码率
+        rc.i_bitrate
     （4）修改acodec.pxd，增加x264.h头文件包装
     （5）重新编译安装
         conda环境：aoirtc-pyav
         编译：cd PyAV && python setup.py build_ext --inplace
         安装：pip install .
+    参考：https://www.cnblogs.com/wainiwann/p/5647521.html
+    https://code.videolan.org/videolan/x264/-/blob/master/x264.h?ref_type=heads
+    https://blog.csdn.net/NB_vol_1/article/details/78400494
+    https://www.cnblogs.com/elesos/p/7410193.html
 2. 修改timestamp bug，同一张视频帧timestamp应该是唯一且相同的，但这样修改会导致同一张有多个版本时只解码了最先到达的
    所以目前的版本是每次编码是唯一的timestamp
+#### Version20210128 TC test
+自发自收测试：
+不开vbv：run-trace-test45
+开启vbv之后（1.5/1.0），码率一路降低，rtt增加容易断联
+1. baseline 限速2.5M-1M测试
+   1. 只设置maxrate*0.9，不设置buffer size 【nomultistream10】
+   2. maxrate*0.9，buffer size*100 【nomultistream9】
+    3.  maxrate*100，buffer size*100 【nomultistream11】
 ## TC
 1. 准备一个至少两个网卡的linux主机作为tc
    tc： ying@192.168.31.23 密码：19981222
    receiver：yan@192.168.31.228 密码：118040
    ![Alt text](.assert/img_v3_025j_5a837f6a-4d3d-4f8e-a075-40199d8dedfg.jpg)
-   ![Alt text](.assert/clPYcKAugi.jpg)
+   ![Alt text1qq](.assert/clPYcKAugi.jpg)
+## 本地编译Pyav
+src/av/plane.c:1227:10: fatal error: 'x264.h' file not found
+#include "x264.h"
+解决：export CFLAGS="-I/Users/ying/Library/CloudStorage/OneDrive-hust.edu.cn/Documents/Paper/New-Exeperment/Project/aiortc/vendor/ffmpeg-6.0/ -I/opt/homebrew/opt/x264/include"
+## 修改20210220
+1. 修改roundrobinpacketqueue.py的日志输出p235，增加了是否为关键帧的输出
+2. 修改receiver的日志输出p811，增加了是否为关键帧的输出
+   
+# 实验数据（result summary）
+## 1.实验一：固定码率实验
+### 1.1 场景一：街道
+固定码率直接控制编码器测试所有指标的mean和std
+实验设置：GOP=2s
+带宽：直线限速
+#### （1）直线限速0.5Mbps
+send_file="./offer/run-trace-test61.log"
+P帧大小：mean，std
+mean P_framesize:2580.4426395939086,std P_framesize:166.72845185817084
+I帧大小：
+mean I_framesize:4063.0625,std I_framesize:808.7589619866663
+I帧前后3张P帧的大小：
+mean P_average_size_perI:2280.895833333333,std P_average_size_perI:198.39486856148218
+I帧大小/前后3张P帧平均大小：
+mean IPrate_3:1.8212238193336334,std IPrate_3:0.5012847330191006
+I帧大小/前后所有P帧平均大小：
+mean IPrate_all:1.5706699627844471,std IPrate_all:0.31503714228083224
+#### （2）直线限速1.0Mbps
+send_file="./offer/run-trace-test62.log"
+mean P_framesize:5058.967828418231,std P_framesize:789.6800060296497
+mean I_framesize:13916.315789473685,std I_framesize:6858.591792340554
+mean P_average_size_perI:3556.1052631578946,std P_average_size_perI:808.0493880209742
+mean IPrate_3:4.647488879119303,std IPrate_3:3.4829470560502256
+mean IPrate_all:2.792759221530295,std IPrate_all:1.3911318555906513
+#### （3）直线限速1.5Mbps
+send_file="./offer/run-trace-test63.log"
+mean P_framesize:7288.820825352604,std P_framesize:1629.4372726380657
+mean I_framesize:38584.52475247525,std I_framesize:36524.96850713778
+mean P_average_size_perI:6724.118811881188,std P_average_size_perI:2227.4294295827926
+mean IPrate_3:7.6912554941229105,std IPrate_3:10.838350334268977
+mean IPrate_all:5.402254215260889,std IPrate_all:5.255828301878845
+#### （4）直线限速2.0Mbps
+send_file="./offer/run-trace-test64.log"
+mean P_framesize:7999.616971740526,std P_framesize:2757.594053168861
+mean I_framesize:111551.80276816609,std I_framesize:51985.1646358237
+mean P_average_size_perI:4839.840830449827,std P_average_size_perI:2219.7479925357984
+mean IPrate_3:35.47653028648914,std IPrate_3:32.77095438744076
+mean IPrate_all:13.335514990177803,std IPrate_all:6.3502033222503
+
+## 2.实验二：加入tc固定码率测试
+做法：加入tc，设置为固定带宽，带宽等级分别为0.5，1.0，1.5，2.0，2.5，3.0,目标码率为带宽的0.95倍
+测试指标：记录每一部分的延时，包括：编码延时，pacer延时，传播延时，jitter延时，解码延时，渲染延时，端到端整体延时
+记录格式：帧number，帧类型，帧大小，帧延时
+实验组数：共七组实验，每组十分钟
+### 2.1 场景一+0.5Mbps
+
+### 2.1 场景一+1.0Mbps
+### 2.1 场景一+1.5Mbps
+### 2.1 场景一+2.0Mbps
+### 2.1 场景一+2.5Mbps
+### 2.1 场景一+3.0Mbps
+
+### 2.1 场景二+1.5Mbps
+### 2.1 场景三+1.5Mbps
+### 2.1 场景四+1.5Mbps
+
+## 3. 实验三：
+做法：加入tc，给tc设置固定带宽，测试不同固定带宽不同场景下的效果，同时去掉gcc，自己设置目标码率为带宽的0.95倍
+测量指标：延时各个组成部分+psnr
+目的：测试本算法（排除码率控制模块）对性能指标的改善情况
+### 3.1 多流编码的aiortc，不使用gcc，自己设置目标码率=0.95*带宽
+#### 3.1.1 场景一+0.5Mbps
+#### 3.1.2 场景一+1.0Mbps
+#### 3.1.3 场景一+1.5Mbps
+#### 3.1.4 场景一+2.0Mbps
+#### 3.1.5 场景一+2.5Mbps
+#### 3.1.6 场景一+3.0Mbps
+#### 3.1.7 场景二+1.5Mbps
+#### 3.1.8 场景三+1.5Mbps
+#### 3.1.9 场景四+1.5Mbps
+
+### 3.2 什么都不做的aiort，不使用默认gcc
+#### 3.2.1 场景一+0.5Mbps
+#### 3.2.2 场景一+1.0Mbps
+#### 3.2.3 场景一+1.5Mbps
+#### 3.2.4 场景一+2.0Mbps
+#### 3.2.5 场景一+2.5Mbps
+#### 3.2.6 场景一+3.0Mbps
+#### 3.2.7 场景二+1.5Mbps
+#### 3.2.8 场景三+1.5Mbps
+#### 3.2.9 场景四+1.5Mbps
+
+### 3.3 I帧大小和P帧差不多，不使用默认gcc
+#### 3.3.1 场景一+0.5Mbps
+#### 3.3.2 场景一+1.0Mbps
+#### 3.3.3 场景一+1.5Mbps
+#### 3.3.4 场景一+2.0Mbps
+#### 3.3.5 场景一+2.5Mbps
+#### 3.3.6 场景一+3.0Mbps
+#### 3.3.7 场景二+1.5Mbps
+#### 3.3.8 场景三+1.5Mbps
+#### 3.3.9 场景四+1.5Mbps
+
+### 3.4 GOP无穷大，不使用默认gcc
+#### 3.4.1 场景一+0.5Mbps
+#### 3.4.2 场景一+1.0Mbps
+#### 3.4.3 场景一+1.5Mbps
+#### 3.4.4 场景一+2.0Mbps
+#### 3.4.5 场景一+2.5Mbps
+#### 3.4.6 场景一+3.0Mbps
+#### 3.4.7 场景二+1.5Mbps
+#### 3.4.8 场景三+1.5Mbps
+#### 3.4.9 场景四+1.5Mbps
+
+## 4. 实验四 动态带宽测试
+做法：给tc设置动态带宽（wifi，4G，5G）测试场景一的效果
+待办：标记额外编码的p帧，统计接受速率
+测量指标：延时各个组成部分+psnr+吞吐量+rtt+loss+rtt jitter+ fps + bitrate jitter
+测试时间：每组10分钟
+### 4.1 什么都不做的aiortc+GCC
+#### 4.1.1 场景一+wifi
+#### 4.1.2 场景一+4G
+#### 4.1.3 场景一+5G
+
+### 4.2 什么都不做的aiortc+PPO
+#### 4.1.1 场景一+wifi
+#### 4.1.2 场景一+4G
+#### 4.1.3 场景一+5G
+
+### 4.3 双流编码+ppo
+#### 4.1.1 场景一+wifi
+#### 4.1.2 场景一+4G
+#### 4.1.3 场景一+5G
+
+### 4.4 双流编码+gcc
+#### 4.1.1 场景一+wifi
+#### 4.1.2 场景一+4G
+#### 4.1.3 场景一+5G
+
+### 4.5 双流编码+自己的码率控制（更好的ppo）
+#### 4.1.1 场景一+wifi
+#### 4.1.2 场景一+4G
+#### 4.1.3 场景一+5G

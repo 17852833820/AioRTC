@@ -10,12 +10,10 @@ import numpy
 import av
 from av import VideoFrame
 print(av.__version__)
-sys.path.append("/Users/ying/Library/CloudStorage/OneDrive-hust.edu.cn/Documents/Paper/New-Exeperment/Project/aiortc/")
+sys.path.append("/Users/ying/Projects/aiortc/")
  # sys.path.append("/mnt/e/ying/OneDrive - hust.edu.cn/Documents/毕业论文/新题-实验/Project/aiortc")
-from src.aiortc.rtcicetransport import RTCIceCandidate
-from src.aiortc.rtcpeerconnection import RTCPeerConnection
-from src.aiortc.rtcsessiondescription import RTCSessionDescription
-from src.aiortc.mediastreams import  VideoStreamTrack
+from src.aiortc import (RTCIceCandidate, RTCPeerConnection,
+                        RTCSessionDescription, VideoStreamTrack)
 from src.aiortc.contrib.media import MediaBlackhole, MediaPlayer, MediaRecorder
 from src.aiortc.contrib.signaling import (BYE, add_signaling_arguments,
                                           create_signaling)
@@ -85,8 +83,8 @@ class FlagVideoStreamTrack(VideoStreamTrack):
 
 async def run(pc, player, recorder, signaling, role):
     def add_tracks():
-        if player and player.audio:
-            pc.addTrack(player.audio)
+        # if player and player.audio:
+        #     pc.addTrack(player.audio)
 
         if player and player.video:
             pc.addTrack(player.video)
@@ -106,7 +104,7 @@ async def run(pc, player, recorder, signaling, role):
         add_tracks()
         capabilities = RTCRtpSender.getCapabilities("video")
         preferences = list(filter(lambda x: x.name == "H264", capabilities.codecs))
-        transceiver = pc.getTransceivers()[1]
+        transceiver = pc.getTransceivers()[0]
         transceiver.setCodecPreferences(preferences)
         await pc.setLocalDescription(await pc.createOffer())
         await signaling.send(pc.localDescription)
@@ -145,8 +143,9 @@ if __name__ == "__main__":
         # 设置日志级别
         logger.setLevel(logging.DEBUG)
         # 根据角色设置日志文件路径
-        log_directory = f"log/res_{args.role}/"
-        log_file = f"{log_directory}run1.log"
+        log_directory = f"log_20240314/{args.role}/"
+        log_file = f"{log_directory}run3.log"
+        # log_file = f"{log_directory}video2_0.log"
         logging.basicConfig(filename=log_file, level=logging.DEBUG,format='%(asctime)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'  )
         # 确保目录存在

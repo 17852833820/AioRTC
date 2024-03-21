@@ -442,9 +442,11 @@ class RTCDtlsTransport(AsyncIOEventEmitter):
                 await self._recv_next()
         except ConnectionError:
             for receiver in self._rtp_router.receivers:
+                self.__log_warning("Connection Cloesd 1")
                 receiver._handle_disconnect()
         except Exception as exc:
             if not isinstance(exc, asyncio.CancelledError):
+                self.__log_warning("Connection Cloesd 2")
                 self.__log_warning(traceback.format_exc())
             raise exc
         finally:
@@ -510,7 +512,7 @@ class RTCDtlsTransport(AsyncIOEventEmitter):
                 return
         else:
             data = await self.transport._recv()
-
+        self.__log_debug("data: %s",data)
         self.__rx_bytes += len(data)
         self.__rx_packets += 1
 
@@ -529,6 +531,7 @@ class RTCDtlsTransport(AsyncIOEventEmitter):
                 self.__log_debug("- DTLS shutdown by remote party")
                 raise ConnectionError
             elif data and self._data_receiver:
+                self.__log_debug("_handle_data: %s",data)
                 await self._data_receiver._handle_data(data)
         elif first_byte > 127 and first_byte < 192 and self._rx_srtp:#如果首字节表明是 SRTP 或 SRTCP 数据包进行解密和处理
             # SRTP / SRTCP
@@ -537,9 +540,11 @@ class RTCDtlsTransport(AsyncIOEventEmitter):
             try:
                 if is_rtcp(data):
                     data = self._rx_srtp.unprotect_rtcp(data)
+                    self.__log_debug("_handle_rtcp_data: %s",data)
                     await self._handle_rtcp_data(data)
                 else:
                     # data = self._rx_srtp.unprotect(data)
+                    self.__log_debug("_handle_rtp_data: %s",data)
                     await self._handle_rtp_data(data, arrival_time_ms=arrival_time_ms,arrival_24NTP_time=arrival_24NTP_time)
             except pylibsrtp.Error as exc:
                 self.__log_debug("x SRTP unprotect failed: %s", exc)

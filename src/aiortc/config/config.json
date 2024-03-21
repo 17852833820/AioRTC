@@ -1,0 +1,12 @@
+{
+    "ABRControl":{
+        "Mode": "GCC", 
+        "Value":"1425000", 
+        "PPO":{
+            "alpha":2.0,
+            "model":"./src/aiortc/model/init.pth"
+        }
+    },
+    
+    "is_multistream":false
+}

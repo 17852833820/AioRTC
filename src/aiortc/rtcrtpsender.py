@@ -7,6 +7,7 @@ import uuid
 from typing import Callable, Dict, List, Optional, Union
 
 import cv2
+import json
 from av import AudioFrame
 from av.frame import Frame
 from .pacer.pacedsender import PacedSender
@@ -24,6 +25,8 @@ from .rtp import (RTCP_PSFB_APP, RTCP_PSFB_PLI, RTCP_RTPFB_NACK,RTCP_PSFB_IF,
                   RtpPacket, unpack_remb_fci, wrap_rtx)
 from .stats import (RTCOutboundRtpStreamStats, RTCRemoteInboundRtpStreamStats,
                     RTCStatsReport)
+from .rate import PPOBitrateEstimator
+
 from .utils import random16, random32, uint16_add, uint32_add
 from .codecs.h264 import DEFAULT_BITRATE
 logger = logging.getLogger(__name__)
@@ -74,7 +77,8 @@ class RTCRtpSender():
     def __init__(self, trackOrKind: Union[MediaStreamTrack, str], transport) -> None:
         if transport.state == "closed":
             raise InvalidStateError
-        
+        with open('./src/aiortc/config/config.json', 'r') as file:
+            self.config=json.load(file)
         if isinstance(trackOrKind, MediaStreamTrack):
             self.__kind = trackOrKind.kind
             self.replaceTrack(trackOrKind)
@@ -130,12 +134,17 @@ class RTCRtpSender():
         self._data=None
         self.__encoder_two: Optional[Encoder] = None
         # self.IDR_receive_finished=False
-        self.use_multistream =False
+        self.use_multistream =self.config["is_multistream"]
+        self.ABRMode=self.config["ABRControl"]["Mode"]#GCC, Fixed, PPO, Rate
+        if self.ABRMode=="PPO":
+            self.ppo_solution=PPOBitrateEstimator()
         self.encode_mode=MultiEncodeMode()
         self.encode_role_forwart=False #前向：stream1向stream2切换，否则stream2向stream1切换
         self.pace_sender:Optional[PacedSender]=None
         self.bitrate_time:int=clock.current_ms()
         self.number:int=0
+        #bitrate control
+        self.last_bitrate:int=0
         
     @property
     def kind(self):
@@ -256,18 +265,21 @@ class RTCRtpSender():
 
     async def _handle_rtcp_packet(self, packet):
         #处理 RR 和 SR 类型的 RTCP 包
-        if isinstance(packet, (RtcpRrPacket, RtcpSrPacket)):
+        if isinstance(packet, (RtcpRrPacket, RtcpSrPacket)): #收到RR包，lsr应为上一次发送的SR包的时间戳
             for report in filter(lambda x: x.ssrc == self._ssrc, packet.reports):
                 # estimate round-trip time
-                if self.__lsr == report.lsr and report.dlsr:
+                logger.debug("report.lsr: %f",report.lsr)
+                if self.__lsr == report.lsr and report.dlsr:# dlsr,fraction lost,jitter,lsr,packet lost,ssrc
                     rtt = time.time() - self.__lsr_time - (report.dlsr / 65536)#接收RR包的时间-发送上一个SR包的时间-dlsr（接收端发送RR包-接收端接收SR包）
                     self.__log_debug('[FRAME_INFO] RTT: %f ms', rtt*1000)
                     if self.__rtt is None:
                         self.__rtt = rtt
                     else:
                         self.__rtt = RTT_ALPHA * self.__rtt + (1 - RTT_ALPHA) * rtt
-                # self.__log_debug('[FRAME_INFO] report loss rate: %f %', report.packets_lost)
-
+                    self.__log_debug('[FRAME_INFO] loss rate: %f, packets_lost: %d, jitter: %d, recvrate: %d, rtt: %f', report.fraction_lost,report.packets_lost,report.jitter,report.recvrate,self.__rtt*1000)
+                    # 获取GCC推理需要的参数 Bps
+                    if self.ABRMode=="PPO":
+                        self.ppo_solution.estimate(clock.current_datetime(),report.jitter,self.last_bitrate,self.__rtt*1000,report.recvrate,report.fraction_lost)
                 self.__stats.add(
                     RTCRemoteInboundRtpStreamStats(
                         # RTCStats
@@ -300,15 +312,17 @@ class RTCRtpSender():
         #处理 APP 类型的 RTCP 包：REMB反馈包（包含估计的带宽信息）
         elif isinstance(packet, RtcpPsfbPacket) and packet.fmt == RTCP_PSFB_APP:
             try:
-                bitrate, ssrcs = unpack_remb_fci(packet.fci)#REMB反馈的带宽估计
-                # if clock.current_ms()-self.bitrate_time<60000:# 60s
-                #     bitrate=2500000
-                # if clock.current_ms()-self.bitrate_time>60000:# 600s
-                #     bitrate=1000000
-                #     bitrate=500000
-                # bitrate=sin_wave[self.number]
-                # self.number+=1
-                # bitrate=500000
+                if self.ABRMode=="GCC":
+                    bitrate, ssrcs = unpack_remb_fci(packet.fci)#REMB反馈的带宽估计
+                elif self.ABRMode=="Fixed":
+                    _, ssrcs = unpack_remb_fci(packet.fci)#REMB反馈的带宽估计
+                    bitrate=float(self.config["ABRControl"]["Value"])
+                elif self.ABRMode=="PPO":
+                    _, ssrcs = unpack_remb_fci(packet.fci)#REMB反馈的带宽估计
+                    bitrate=self.ppo_solution.send_rate#  bps
+                else:
+                    bitrate, ssrcs = unpack_remb_fci(packet.fci)#REMB反馈的带宽估计
+                self.last_bitrate=bitrate
                 if self._ssrc in ssrcs:
                     # 更新编码速率
                     if self.__encoder and hasattr(self.__encoder, "target_bitrate"):
@@ -316,7 +330,7 @@ class RTCRtpSender():
                     if self.__encoder_two and hasattr(self.__encoder_two, "target_bitrate"):
                             self.__encoder_two.target_bitrate=bitrate
                     # 更新pacer速率
-                    pacing_rate=(2.5*bitrate)/1024
+                    pacing_rate=(1.5*bitrate)/1024
                     self.pace_sender.set_pacing_rates(pacing_rate,0)# kbps
                     self.__log_debug(
                         "BWE | receiver estimated maximum bitrate Target bitrate:%d bps,encode bitrate:%d,pacing bitrate:%d", bitrate,self.__encoder.target_bitrate,pacing_rate
@@ -751,7 +765,7 @@ class RTCRtpSender():
         self.__log_debug("- RTP finished")
         self.__rtp_exited.set()
 
-    async def _run_rtcp(self) -> None:
+    async def _run_rtcp(self) -> None: #不定时发送SR包，lsr为当前时刻
         self.__log_debug("- RTCP started")
         self.__rtcp_started.set()
 
@@ -759,7 +773,7 @@ class RTCRtpSender():
             while True:
                 # The interval between RTCP packets is varied randomly over the
                 # range [0.5, 1.5] times the calculated interval.
-                await asyncio.sleep(0.5 + random.random())
+                await asyncio.sleep(1 + random.random())
 
                 # RTCP SR
                 packets: List[AnyRtcpPacket] = [

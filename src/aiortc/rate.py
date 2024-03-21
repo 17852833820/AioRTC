@@ -2,11 +2,15 @@ import logging
 import math
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
-
+from .ratecontrol.PPO import PPO,RolloutBuffer,ActorCritic
 from .utils import uint32_add, uint32_gt
-
+import json
+import numpy as np
+import torch.nn as nn
+import torch
+from typing import Callable, Dict, List, Optional, Union
 BURST_DELTA_THRESHOLD_MS = 5
-
+logger = logging.getLogger(__name__)
 # overuse detector
 MAX_ADAPT_OFFSET_MS = 15
 MIN_NUM_DELTAS = 60
@@ -506,7 +510,158 @@ class RateCounter:
             self._origin_index = (self._origin_index + 1) % self._window_size
             self._origin_ms += 1
 
+class PPOBitrateEstimator:
+    def __init__(self) -> None:
+        with open('./src/aiortc/config/config.json', 'r') as file:
+            self.config=json.load(file)
+        self.num_history_step=30
+        self.send_rate_range=self.config["ABRControl"]["PPO"]["alpha"]
+        self.safeguard=100*1e3/8.0
+        self.checkpoint_path=self.config["ABRControl"]["PPO"]["model"]
+        
+        self._state_dict = None
+        self.reset_state()
+        
+        """constants"""
+        self.constant = {
+            'state_dim': 30 * 5,
+            'action_dim': 21,
+            'send_rate_map_bps': np.linspace(-self.send_rate_range, self.send_rate_range, 21, endpoint=True),  # alpha: -2~2
+            'initial_rate_bps': 100 * 1e3,
+            'min_rate': 100 * 1e3,
+            'max_rate': 3000000,
+            'max_bandwidth': 5.0e6,  # used to normalize throughput, bps
+            'delay_jitter_smooth_factor': 16,
+            'delay_jitter_sample_interval_s': 30e-3,
+            'reward_func': self.reward_func,
+            'interval': 0.1
+        }
+      
+        self.policy=PPO(
+				state_dim = self.constant['state_dim'], 
+				action_dim = self.constant['action_dim'], 
+				has_continuous_action_space = False, 
+				lr_actor = 1e-4, 
+				lr_critic = 1e-3, 
+				gamma = 0.8, 
+				K_epochs = 10, 
+				eps_clip = 0.2,
+				entropy_factor = lambda update:0.6,
+				evaluate=True
+				)
+        self.policy.load(self.checkpoint_path)
+        """init epoch specified signals"""
+        self.reset_epoch_signals()
+        self._input_list=[]
+        self.ssrcs: Dict[int, int] = {}
+        
+    def reset_epoch_signals(self):
+        """
+        init epoch specified signals
+        """
+        self.USE_CWND = False
+        self.est_timestamps=[]
+        self.send_rate = self.constant['initial_rate_bps'] / 8  # initial rete
+        self.action = 0
+        self.fd_id = 0
+        # last
+        self.last_send_rate_bps = self.constant['initial_rate_bps']
+        self.send_rate_jitter_bps = 0
+        # counter
+        self.epoch_step_cnt = 0
+        self.epoch_update_cnt = 0
+        # history
+        self.epoch_history = {
+            'reward': {},
+            'state': {},
+            'action': {},
+            'others': {}
+        }
+        self.device="cpu"
+    @property
+    def state(self):
+        s = np.array(list(self._state_dict.values()))
+        s = np.concatenate(s, axis=0)
+        return s
+    def reward_func(instant_rate_mbps, instant_delay_s, instant_loss_rate, send_rate_jitter_mbps):
+        reward = 50 * instant_rate_mbps - 50 * instant_loss_rate - 200 * instant_delay_s - send_rate_jitter_mbps * 20
+        return reward
+    def reset_state(self):
+        n_h = self.num_history_step
+        self._state_dict = {
+            "rtt_s": np.zeros(n_h),  # delay
+            "inter_packet_delay_s": np.zeros(n_h),  # delay_jit
+            "loss_rate": np.zeros(n_h),  # loss
+            "recv_throughput_bps": np.zeros(n_h),  # throughput
+            "last_final_estimation_rate_bps": np.zeros(n_h)  # action_history
+        }
+    def append_to_state(self, state: dict):
+        # fifo: https://numpy.org/doc/stable/reference/generated/numpy.roll.html
+        # ([oldest, ..., newest])
+        for key in self._state_dict.keys():
+            self._state_dict[key] = np.roll(self._state_dict[key], -1)
+            self._state_dict[key][-1] = state[key]
+    def estimate(self,cur_time,inter_packet_delay_ms,last_encoded_rate_bps,rtt_ms,recv_throughput_bps,loss_rate):
+        
+        self.est_timestamps.append(cur_time)
+        event_info={
+            "inter_packet_delay_ms":inter_packet_delay_ms/1000.0,# delay jitter
+            "last_encoded_rate_bps":last_encoded_rate_bps, # last bitrate
+            "rtt_ms":rtt_ms,# delay
+            "recv_throughput_bps":recv_throughput_bps,
+            "loss_rate":loss_rate
+        }
+        self._input_list.append([cur_time, event_info])
+        """inference"""
+        if not self.constant["interval"] or len(self.est_timestamps)==1 or (cur_time-self.est_timestamps[-2]).total_seconds()>(self.constant['interval']):
+            if self.constant['interval']:
+                 instant_packets=list(filter(lambda item:(self._input_list[-1][0] - item[0]).total_seconds() < self.constant['interval'],self._input_list))
+                 if len(instant_packets)==0:
+                     return 
+            else:
+                instant_packets=[self._input_list[-1]]
+            "calculate state"
+            instant_loss_sum = sum([item[1]['loss_rate']/255 for item in instant_packets])
+            instant_loss_rate = instant_loss_sum / len(instant_packets) if len(instant_packets) > 0 else 0
+            """average throughput(bps) in the passed second"""
+            instant_bits_sum = sum([item[1]["recv_throughput_bps"] for item in instant_packets])
+            instant_rate_bps = instant_bits_sum / len(instant_packets) if len(instant_packets) > 0 else 0
+            """average packet delay(s) in the passed second"""
+            instant_delay_sum = sum([item[1]["rtt_ms"]/1000 for item in instant_packets])
+            instant_delay = instant_delay_sum / len(instant_packets) if len(instant_packets) > 0 else 0
+            """delay jitter"""
+            # instant_delay_jitters = list(filter(lambda item: cur_time - item[0] < 1., self.delay_jitter_samples))
+            instant_delay_jitter_sum = sum([item[1]["inter_packet_delay_ms"]/1000 for item in instant_packets])
+            instant_delay_jitter = instant_delay_jitter_sum / len(instant_packets) if len(instant_packets) > 0 else 0
+            """last_encoded_rate_bps"""
+            instant_encode_rate_sum = sum([item[1]["last_encoded_rate_bps"] for item in instant_packets])
+            instant_encode_rate_bps = instant_encode_rate_sum / len(instant_packets) if len(instant_packets) > 0 else 0
 
+        """state"""
+        self.append_to_state({
+            "rtt_s": instant_delay,  # delay
+            "inter_packet_delay_s": instant_delay_jitter,  # delay_jit
+            "loss_rate": instant_loss_rate,  # loss
+            "recv_throughput_bps": instant_rate_bps / self.constant['max_bandwidth'],  # throughput
+            "last_final_estimation_rate_bps": self.last_send_rate_bps / self.constant['max_bandwidth']
+        })
+        state = self.state
+        """action"""
+        action, force_action, action_logprob = self.policy.select_action(state)
+        alpha = self.constant['send_rate_map_bps'][action]
+        send_rate_bps = max(self.last_send_rate_bps * np.exp(alpha), self.constant['min_rate'])
+        send_rate_bps = np.clip(send_rate_bps, self.constant['min_rate'], self.constant['max_rate'])
+        logger.debug('[PPO] loss rate: %f, last_send_rate_bps: %f bps, jitter: %f, recvrate: %f, rtt: %f, action: %f, alpha: %f,send_rate_bps: %f', instant_loss_rate,self.last_send_rate_bps,instant_delay_jitter,instant_rate_bps,instant_delay,action,alpha,send_rate_bps)
+
+        # calculate jitter
+        self.send_rate_jitter_bps = abs(send_rate_bps - self.last_send_rate_bps)
+        self.last_send_rate_bps = send_rate_bps
+        # set send rate
+        self.send_rate = send_rate_bps -self.safeguard if send_rate_bps >self.safeguard*8 else send_rate_bps  # bps
+        # if instant_delay>0.1 and 800*1e6/8.0>self.send_rate>400*1e3/8.0:
+        #     self.send_rate=400*1e3/8.0
+        self.fd_id += 1
+        return
 class RemoteBitrateEstimator:
     def __init__(self) -> None:
         self.incoming_bitrate = RateCounter(1000, 8000)

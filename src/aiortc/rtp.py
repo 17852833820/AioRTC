@@ -376,18 +376,19 @@ class RtcpReceiverInfo:
     jitter: int
     lsr: int
     dlsr: int
+    recvrate:int
 
     def __bytes__(self) -> bytes:
         data = pack("!LB", self.ssrc, self.fraction_lost)
         data += pack_packets_lost(self.packets_lost)
-        data += pack("!LLLL", self.highest_sequence, self.jitter, self.lsr, self.dlsr)
+        data += pack("!LLLLL", self.highest_sequence, self.jitter, self.lsr, self.dlsr,self.recvrate)
         return data
 
     @classmethod
     def parse(cls, data: bytes):
         ssrc, fraction_lost = unpack("!LB", data[0:5])
         packets_lost = unpack_packets_lost(data[5:8])
-        highest_sequence, jitter, lsr, dlsr = unpack("!LLLL", data[8:])
+        highest_sequence, jitter, lsr, dlsr,recvrate = unpack("!LLLLL", data[8:])
         return cls(
             ssrc=ssrc,
             fraction_lost=fraction_lost,
@@ -396,6 +397,7 @@ class RtcpReceiverInfo:
             jitter=jitter,
             lsr=lsr,
             dlsr=dlsr,
+            recvrate=recvrate
         )
 
 
@@ -489,15 +491,15 @@ class RtcpRrPacket:
 
     @classmethod
     def parse(cls, data: bytes, count: int):
-        if len(data) != 4 + 24 * count:
+        if len(data) != 4 + 28 * count:# 24 to 28
             raise ValueError("RTCP receiver report length is invalid")
 
         ssrc = unpack("!L", data[0:4])[0]
         pos = 4
         reports = []
         for r in range(count):
-            reports.append(RtcpReceiverInfo.parse(data[pos : pos + 24]))
-            pos += 24
+            reports.append(RtcpReceiverInfo.parse(data[pos : pos + 28]))
+            pos += 28
         return cls(ssrc=ssrc, reports=reports)
 
 
@@ -603,7 +605,7 @@ class RtcpSrPacket:
 
     @classmethod
     def parse(cls, data: bytes, count: int):
-        if len(data) != 24 + 24 * count:
+        if len(data) != 24 + 28 * count:
             raise ValueError("RTCP sender report length is invalid")
 
         ssrc = unpack_from("!L", data)[0]
@@ -611,8 +613,8 @@ class RtcpSrPacket:
         pos = 24
         reports = []
         for r in range(count):
-            reports.append(RtcpReceiverInfo.parse(data[pos : pos + 24]))
-            pos += 24
+            reports.append(RtcpReceiverInfo.parse(data[pos : pos + 28]))
+            pos += 28
         return RtcpSrPacket(ssrc=ssrc, sender_info=sender_info, reports=reports)
 
 
